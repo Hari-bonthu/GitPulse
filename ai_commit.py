@@ -112,4 +112,4 @@ def generate_commit_message(diff_text: str) -> Tuple[str, str]:
         return generate_commit_message_openai(diff_text, key), "openai"
     else:
         from datetime import datetime
-        return f"Update files — {datetime.now().strftime('%Y-%m-%d')}", "none"
+        return f"Update files - {datetime.now().strftime('%Y-%m-%d')}", "none"

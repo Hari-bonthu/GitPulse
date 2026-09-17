@@ -1,5 +1,10 @@
 {
-  "repos": [],
+  "repos": [
+    {
+      "id": "Desktop_GitPulse",
+      "path": "C:\\Users\\DELL\\Desktop\\GitPulse"
+    }
+  ],
   "settings": {
     "staleness_threshold_days": 3,
     "auto_refresh_seconds": 60,
