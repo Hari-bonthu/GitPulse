@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en" class="theme-dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="GitPulse is a local web dashboard to monitor git statuses, commit history, diffs, stashes, and branch health across all your repositories.">
+  <meta name="theme-color" content="#0a0a0b">
+  <title>GitPulse — Multi-Repo Git Dashboard</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/static/site.webmanifest">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="app-logo">
+        <i data-lucide="git-branch" style="width:22px;height:22px;"></i>
+        <span>GitPulse</span>
+      </div>
+      <div class="header-actions">
+        <!-- Auto-refresh toggle -->
+        <div style="display:flex;align-items:center;gap:6px;margin-right:8px;">
+          <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:4px;">
+            <input type="checkbox" id="auto-refresh-toggle" checked style="accent-color:var(--accent);">
+            Auto
+          </label>
+          <select id="refresh-interval" style="background:var(--bg-input);border:1px solid var(--border);color:var(--text-secondary);font-size:12px;padding:2px 6px;border-radius:4px;">
+            <option value="30">30s</option>
+            <option value="60" selected>60s</option>
+            <option value="300">5m</option>
+          </select>
+        </div>
+
+        <button class="btn btn-ghost btn-icon" id="refresh-btn" title="Refresh now">
+          <i data-lucide="refresh-cw" style="width:16px;height:16px;"></i>
+        </button>
+        <button class="btn btn-ghost btn-icon" id="settings-btn" title="Settings">
+          <i data-lucide="settings" style="width:16px;height:16px;"></i>
+        </button>
+        <div class="notification-badge" style="position:relative;">
+          <button class="btn btn-ghost btn-icon" id="notification-btn" title="Notifications">
+            <i data-lucide="bell" style="width:16px;height:16px;"></i>
+          </button>
+          <span class="badge-count hidden" id="notification-count">0</span>
+          <!-- Notification Dropdown -->
+          <div class="notification-dropdown hidden" id="notification-panel">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;">
+              Notifications
+            </div>
+            <div id="notification-list">
+              <div class="empty-state" style="padding:30px 20px;">
+                <i data-lucide="bell-off" style="width:24px;height:24px;"></i>
+                <p style="margin-top:8px;font-size:12px;">No notifications</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Summary Bar -->
+    <div class="summary-bar" id="summary-bar">
+      <div class="summary-stat">
+        <span class="count" id="stat-total">0</span> tracked
+      </div>
+      <div class="summary-divider"></div>
+      <div class="summary-stat">
+        <span class="count" id="stat-attention" style="color:var(--warning);">0</span> need attention
+      </div>
+      <div class="summary-divider"></div>
+      <div class="summary-stat">
+        <span class="count" id="stat-unpushed" style="color:var(--error);">0</span> unpushed
+      </div>
+      <div class="summary-divider"></div>
+      <div class="summary-stat">
+        <span class="count" id="stat-stale" style="color:var(--status-stale);">0</span> stale
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div class="app-body">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-header">Repositories</div>
+        <div class="sidebar-list" id="sidebar-list">
+          <!-- Repo cards injected here -->
+        </div>
+        <button class="add-repo-btn" id="add-repo-btn">
+          <i data-lucide="folder-plus" style="width:16px;height:16px;"></i>
+          Add Repository
+        </button>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="main-content" id="main-content">
+        <!-- Dashboard View (default) -->
+        <div id="dashboard-view">
+          <div class="dashboard-grid" id="dashboard-grid">
+            <!-- Dashboard cards injected here -->
+          </div>
+        </div>
+
+        <!-- Detail View (hidden by default) -->
+        <div id="detail-view" class="hidden">
+          <div class="detail-view">
+            <!-- Back button + Repo name -->
+            <div class="detail-header">
+              <div class="detail-title" id="detail-title"></div>
+              <button class="detail-back-btn" id="back-to-dashboard">
+                <i data-lucide="arrow-left" style="width:14px;height:14px;"></i>
+                Back
+              </button>
+            </div>
+
+            <!-- Branch bar -->
+            <div class="branch-bar" id="branch-bar"></div>
+
+            <!-- Git Tree -->
+            <div class="section-panel" id="tree-panel">
+              <div class="section-header" data-section="tree">
+                <div class="section-title">
+                  <i data-lucide="folder-tree"></i>
+                  <span>Changed Files</span>
+                  <span class="section-badge" id="tree-count">0</span>
+                </div>
+                <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
+              </div>
+              <div class="section-content open" id="tree-content">
+                <div class="git-tree" id="git-tree"></div>
+              </div>
+            </div>
+
+            <!-- Diff Viewer -->
+            <div class="section-panel" id="diff-panel" class="hidden">
+              <div class="section-header" data-section="diff">
+                <div class="section-title">
+                  <i data-lucide="file-diff"></i>
+                  <span>Diff Preview</span>
+                  <span id="diff-filename" style="font-weight:400;color:var(--text-muted);font-size:12px;"></span>
+                </div>
+                <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
+              </div>
+              <div class="section-content open" id="diff-content">
+                <div class="diff-viewer" id="diff-viewer">
+                  <div class="empty-state" style="padding:20px;">
+                    <p style="font-size:12px;color:var(--text-muted);">Click a file to view diff</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stash Section -->
+            <div class="section-panel" id="stash-panel">
+              <div class="section-header" data-section="stash">
+                <div class="section-title">
+                  <i data-lucide="archive"></i>
+                  <span>Stash</span>
+                  <span class="section-badge" id="stash-count">0</span>
+                </div>
+                <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
+              </div>
+              <div class="section-content" id="stash-content">
+                <div id="stash-list"></div>
+              </div>
+            </div>
+
+            <!-- Commit History -->
+            <div class="section-panel" id="history-panel">
+              <div class="section-header" data-section="history">
+                <div class="section-title">
+                  <i data-lucide="git-commit-horizontal"></i>
+                  <span>Recent Commits</span>
+                </div>
+                <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
+              </div>
+              <div class="section-content" id="history-content">
+                <div id="history-list"></div>
+              </div>
+            </div>
+
+            <!-- Commit Panel -->
+            <div class="section-panel">
+              <div class="commit-panel">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                  <span style="font-weight:600;font-size:13px;">Commit Changes</span>
+                  <button class="btn btn-ghost btn-sm" id="ai-generate-btn">
+                    <i data-lucide="sparkles" style="width:14px;height:14px;color:var(--accent);"></i>
+                    Generate AI Message
+                  </button>
+                </div>
+                <textarea class="commit-message-input" id="commit-message" placeholder="Enter commit message..." rows="2"></textarea>
+                <div class="commit-actions">
+                  <div style="flex:1;"></div>
+                  <div class="btn-dropdown-group" id="commit-dropdown">
+                    <button class="btn btn-primary btn-dropdown-main" id="commit-main-btn">
+                      <i data-lucide="git-commit-horizontal" style="width:14px;height:14px;"></i>
+                      <span id="commit-btn-label">Commit</span>
+                    </button>
+                    <button class="btn btn-primary btn-dropdown-toggle" id="commit-toggle-btn">
+                      <i data-lucide="chevron-up" style="width:12px;height:12px;"></i>
+                    </button>
+                    <div class="dropdown-menu hidden" id="commit-menu">
+                      <button class="dropdown-item" data-action="commit">
+                        <i data-lucide="git-commit-horizontal"></i>
+                        Commit
+                      </button>
+                      <button class="dropdown-item" data-action="commit-push">
+                        <i data-lucide="upload"></i>
+                        Commit & Push
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Add Repo Modal -->
+  <div class="modal-overlay hidden" id="add-repo-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title">Add Repository</span>
+        <button class="btn btn-ghost btn-icon btn-sm" id="close-add-modal">
+          <i data-lucide="x" style="width:16px;height:16px;"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="repo-path-input">Repository Path</label>
+          <input type="text" class="form-input" id="repo-path-input" placeholder="C:\Users\you\projects\my-repo">
+          <p style="font-size:11px;color:var(--text-muted);margin-top:6px;">Enter the full path to a git repository root folder.</p>
+          <p id="repo-path-error" style="font-size:12px;color:var(--error);margin-top:4px;" class="hidden"></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancel-add-repo">Cancel</button>
+        <button class="btn btn-primary" id="confirm-add-repo">
+          <i data-lucide="plus" style="width:14px;height:14px;"></i>
+          Add
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay hidden" id="settings-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title">Settings</span>
+        <button class="btn btn-ghost btn-icon btn-sm" id="close-settings-modal">
+          <i data-lucide="x" style="width:16px;height:16px;"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Staleness Threshold (days)</label>
+          <input type="number" class="form-input" id="setting-staleness" min="1" max="30" value="3">
+        </div>
+        <div class="form-group">
+          <label class="form-label">AI Provider</label>
+          <select class="form-select" id="setting-ai-provider">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notification Quiet Start</label>
+          <input type="time" class="form-input" id="setting-quiet-start" value="22:00">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notification Quiet End</label>
+          <input type="time" class="form-input" id="setting-quiet-end" value="08:00">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Theme</label>
+          <select class="form-select" id="setting-theme">
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancel-settings">Cancel</button>
+        <button class="btn btn-primary" id="save-settings">
+          <i data-lucide="check" style="width:14px;height:14px;"></i>
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Dialog -->
+  <div class="modal-overlay hidden" id="confirm-dialog">
+    <div class="modal-content" style="max-width:380px;">
+      <div class="modal-header">
+        <span class="modal-title" id="confirm-title">Confirm</span>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message" style="font-size:13px;color:var(--text-secondary);"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="confirm-cancel">Cancel</button>
+        <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

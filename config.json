@@ -1,0 +1,11 @@
+{
+  "repos": [],
+  "settings": {
+    "staleness_threshold_days": 3,
+    "auto_refresh_seconds": 60,
+    "notification_quiet_start": "22:00",
+    "notification_quiet_end": "08:00",
+    "ai_provider": "gemini",
+    "theme": "system"
+  }
+}
