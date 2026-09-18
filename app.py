@@ -33,6 +33,7 @@ from git import Repo
 
 # --- Config ---
 CONFIG_PATH = Path(__file__).parent / "config.json"
+CONFIG_EXAMPLE_PATH = Path(__file__).parent / "config.example.json"
 
 
 def load_config() -> AppConfig:
@@ -40,7 +41,15 @@ def load_config() -> AppConfig:
         with open(CONFIG_PATH, "r") as f:
             data = json.load(f)
         return AppConfig(**data)
-    return AppConfig(repos=[], settings=Settings())
+    elif CONFIG_EXAMPLE_PATH.exists():
+        with open(CONFIG_EXAMPLE_PATH, "r") as f:
+            data = json.load(f)
+        cfg = AppConfig(**data)
+        save_config(cfg)
+        return cfg
+    cfg = AppConfig(repos=[], settings=Settings())
+    save_config(cfg)
+    return cfg
 
 
 def save_config(config: AppConfig):
@@ -86,6 +95,16 @@ app = FastAPI(
 
 # Serve static files
 static_dir = Path(__file__).parent / "static"
+
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
@@ -351,20 +370,57 @@ async def ai_generate_commit(req: GenerateCommitMessageRequest):
     path = _find_repo_path(req.repo_id)
     try:
         repo = Repo(path)
-        # Get combined diff
-        diff_text = repo.git.diff()
-        if not diff_text:
-            diff_text = repo.git.diff('--cached')
-        if not diff_text:
-            # Include untracked file names
-            untracked = repo.untracked_files
-            if untracked:
-                diff_text = "New untracked files:\n" + "\n".join(f"  + {f}" for f in untracked)
-            else:
-                raise HTTPException(status_code=400, detail="No changes to generate message for")
+        config = load_config()
+        provider = config.settings.ai_provider or "gemini"
 
-        message, provider = generate_commit_message(diff_text)
-        return GenerateCommitMessageResponse(message=message, provider=provider)
+        # Resolve API key from settings if provided
+        api_key = None
+        if provider == "gemini" and config.settings.gemini_api_key:
+            api_key = config.settings.gemini_api_key
+        elif provider == "openai" and config.settings.openai_api_key:
+            api_key = config.settings.openai_api_key
+
+        target_files = req.files if req.files else None
+
+        diff_parts = []
+        try:
+            diff_cached = repo.git.diff('--cached', *(target_files or []))
+            if diff_cached:
+                diff_parts.append(diff_cached)
+        except Exception:
+            pass
+
+        try:
+            diff_working = repo.git.diff(*(target_files or []))
+            if diff_working:
+                diff_parts.append(diff_working)
+        except Exception:
+            pass
+
+        # Untracked files
+        untracked = [f for f in repo.untracked_files if not target_files or f in target_files]
+        if untracked:
+            diff_parts.append("New untracked files:\n" + "\n".join(f"  + {f}" for f in untracked))
+
+        diff_text = "\n\n".join(diff_parts)
+
+        # File list
+        if target_files:
+            all_changed_files = target_files
+        else:
+            changed_entries = get_changed_files(path)
+            all_changed_files = [f.path for f in changed_entries]
+
+        if not diff_text and not all_changed_files:
+            raise HTTPException(status_code=400, detail="No changes to generate message for")
+
+        message, used_provider = generate_commit_message(
+            diff_text=diff_text,
+            provider=provider,
+            api_key=api_key,
+            changed_files=all_changed_files
+        )
+        return GenerateCommitMessageResponse(message=message, provider=used_provider)
     except HTTPException:
         raise
     except Exception as e:

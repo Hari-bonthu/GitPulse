@@ -95,6 +95,7 @@ class StageRequest(BaseModel):
 
 class GenerateCommitMessageRequest(BaseModel):
     repo_id: str
+    files: Optional[List[str]] = None
 
 class GenerateCommitMessageResponse(BaseModel):
     message: str
@@ -106,6 +107,8 @@ class Settings(BaseModel):
     notification_quiet_start: Optional[str] = "22:00"
     notification_quiet_end: Optional[str] = "08:00"
     ai_provider: str = "gemini"
+    gemini_api_key: Optional[str] = ""
+    openai_api_key: Optional[str] = ""
     theme: str = "system"
 
 class RepoConfig(BaseModel):

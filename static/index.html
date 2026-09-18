@@ -8,29 +8,50 @@
   <title>GitPulse — Multi-Repo Git Dashboard</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="/static/site.webmanifest">
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=2.2">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
   <div class="app-layout">
     <!-- Header -->
     <header class="app-header">
-      <div class="app-logo">
+      <div class="app-logo" id="app-logo" onclick="backToDashboard()" title="Back to All Repositories (Dashboard)">
         <i data-lucide="git-branch" style="width:22px;height:22px;"></i>
         <span>GitPulse</span>
       </div>
       <div class="header-actions">
-        <!-- Auto-refresh toggle -->
-        <div style="display:flex;align-items:center;gap:6px;margin-right:8px;">
+        <!-- Dashboard Button -->
+        <button class="btn btn-ghost btn-sm" id="header-dashboard-btn" onclick="backToDashboard()" title="View All Repositories">
+          <i data-lucide="layout-grid" style="width:14px;height:14px;"></i>
+          <span>Dashboard</span>
+        </button>
+
+        <!-- Auto-refresh custom dropdown -->
+        <div style="display:flex;align-items:center;gap:6px;margin-right:4px;">
           <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:4px;">
             <input type="checkbox" id="auto-refresh-toggle" checked style="accent-color:var(--accent);">
             Auto
           </label>
-          <select id="refresh-interval" style="background:var(--bg-input);border:1px solid var(--border);color:var(--text-secondary);font-size:12px;padding:2px 6px;border-radius:4px;">
-            <option value="30">30s</option>
-            <option value="60" selected>60s</option>
-            <option value="300">5m</option>
-          </select>
+          <div class="custom-dropdown" id="refresh-interval-dropdown">
+            <button class="custom-dropdown-btn" id="refresh-interval-btn" type="button" title="Auto-refresh interval">
+              <span id="refresh-interval-label">60s</span>
+              <i data-lucide="chevron-down" style="width:12px;height:12px;"></i>
+            </button>
+            <div class="custom-dropdown-menu hidden" id="refresh-interval-menu">
+              <div class="custom-dropdown-item" data-value="30">
+                <span>30s</span>
+                <i data-lucide="check" class="item-check hidden" style="width:12px;height:12px;"></i>
+              </div>
+              <div class="custom-dropdown-item active" data-value="60">
+                <span>60s</span>
+                <i data-lucide="check" class="item-check" style="width:12px;height:12px;"></i>
+              </div>
+              <div class="custom-dropdown-item" data-value="300">
+                <span>5m</span>
+                <i data-lucide="check" class="item-check hidden" style="width:12px;height:12px;"></i>
+              </div>
+            </div>
+          </div>
         </div>
 
         <button class="btn btn-ghost btn-icon" id="refresh-btn" title="Refresh now">
@@ -62,7 +83,7 @@
 
     <!-- Summary Bar -->
     <div class="summary-bar" id="summary-bar">
-      <div class="summary-stat">
+      <div class="summary-stat" onclick="backToDashboard()" style="cursor:pointer;" title="View all repositories">
         <span class="count" id="stat-total">0</span> tracked
       </div>
       <div class="summary-divider"></div>
@@ -83,6 +104,14 @@
     <div class="app-body">
       <!-- Sidebar -->
       <aside class="sidebar">
+        <!-- Top Navigation to Dashboard Grid -->
+        <div class="sidebar-top-nav">
+          <button class="sidebar-nav-btn active" id="sidebar-dashboard-btn" onclick="backToDashboard()" title="View all repositories in grid view">
+            <i data-lucide="layout-grid"></i>
+            <span>All Repositories</span>
+            <span class="nav-badge" id="sidebar-repo-count">0</span>
+          </button>
+        </div>
         <div class="sidebar-header">Repositories</div>
         <div class="sidebar-list" id="sidebar-list">
           <!-- Repo cards injected here -->
@@ -107,11 +136,11 @@
           <div class="detail-view">
             <!-- Back button + Repo name -->
             <div class="detail-header">
-              <div class="detail-title" id="detail-title"></div>
-              <button class="detail-back-btn" id="back-to-dashboard">
+              <button class="btn btn-secondary btn-sm" id="back-to-dashboard" onclick="backToDashboard()" title="Back to All Repositories">
                 <i data-lucide="arrow-left" style="width:14px;height:14px;"></i>
-                Back
+                <span>All Repositories</span>
               </button>
+              <div class="detail-title" id="detail-title"></div>
             </div>
 
             <!-- Branch bar -->
@@ -121,11 +150,18 @@
             <div class="section-panel" id="tree-panel">
               <div class="section-header" data-section="tree">
                 <div class="section-title">
-                  <i data-lucide="folder-tree"></i>
+                  <i data-lucide="folder-tree" style="width:16px;height:16px;"></i>
                   <span>Changed Files</span>
                   <span class="section-badge" id="tree-count">0</span>
+                  <button class="btn btn-selection-toggle" id="toggle-stage-all-btn" onclick="event.stopPropagation(); toggleSelectAll();" title="Toggle selection of all files">
+                    <i data-lucide="check-square" id="toggle-stage-all-icon" style="width: 12px; height: 12px;"></i>
+                    <span id="toggle-stage-all-label">Select All</span>
+                  </button>
                 </div>
-                <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <span id="selected-files-summary" style="font-size:11px;color:var(--text-muted);"></span>
+                  <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
+                </div>
               </div>
               <div class="section-content open" id="tree-content">
                 <div class="git-tree" id="git-tree"></div>
@@ -181,7 +217,7 @@
             </div>
 
             <!-- Commit Panel -->
-            <div class="section-panel">
+            <div class="section-panel commit-section-panel">
               <div class="commit-panel">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
                   <span style="font-weight:600;font-size:13px;">Commit Changes</span>
@@ -192,27 +228,38 @@
                 </div>
                 <textarea class="commit-message-input" id="commit-message" placeholder="Enter commit message..." rows="2"></textarea>
                 <div class="commit-actions">
-                  <div style="flex:1;"></div>
+                  <div style="flex:1;font-size:12px;color:var(--text-muted);" id="commit-selection-hint"></div>
                   <div class="btn-dropdown-group" id="commit-dropdown">
                     <button class="btn btn-primary btn-dropdown-main" id="commit-main-btn">
-                      <i data-lucide="git-commit-horizontal" style="width:14px;height:14px;"></i>
+                      <i data-lucide="git-commit-horizontal" id="commit-main-icon" style="width:14px;height:14px;"></i>
                       <span id="commit-btn-label">Commit</span>
                     </button>
-                    <button class="btn btn-primary btn-dropdown-toggle" id="commit-toggle-btn">
+                    <button class="btn btn-primary btn-dropdown-toggle" id="commit-toggle-btn" title="Choose commit action">
                       <i data-lucide="chevron-up" style="width:12px;height:12px;"></i>
                     </button>
-                    <div class="dropdown-menu hidden" id="commit-menu">
-                      <button class="dropdown-item" data-action="commit">
-                        <i data-lucide="git-commit-horizontal"></i>
-                        Commit
+                    <div class="commit-dropdown-menu hidden" id="commit-menu">
+                      <button class="commit-dropdown-item active" data-action="commit">
+                        <i data-lucide="git-commit-horizontal" class="item-icon"></i>
+                        <div class="item-content">
+                          <div class="item-title">
+                            <span>Commit</span>
+                            <i data-lucide="check" class="action-check" style="width:13px;height:13px;"></i>
+                          </div>
+                          <div class="item-desc">Stage & commit selected files locally</div>
+                        </div>
                       </button>
-                      <button class="dropdown-item" data-action="commit-push">
-                        <i data-lucide="upload"></i>
-                        Commit & Push
+                      <button class="commit-dropdown-item" data-action="commit-push">
+                        <i data-lucide="upload" class="item-icon"></i>
+                        <div class="item-content">
+                          <div class="item-title">
+                            <span>Commit & Push</span>
+                            <i data-lucide="check" class="action-check hidden" style="width:13px;height:13px;"></i>
+                          </div>
+                          <div class="item-desc">Commit changes and push to remote</div>
+                        </div>
                       </button>
                     </div>
                   </div>
-                </div>
               </div>
             </div>
           </div>
@@ -264,10 +311,52 @@
         </div>
         <div class="form-group">
           <label class="form-label">AI Provider</label>
-          <select class="form-select" id="setting-ai-provider">
-            <option value="gemini">Google Gemini</option>
-            <option value="openai">OpenAI</option>
-          </select>
+          <div class="custom-select" id="dropdown-ai-provider">
+            <button class="custom-select-trigger" type="button" id="trigger-ai-provider" aria-haspopup="listbox" aria-expanded="false">
+              <span class="custom-select-label" id="label-ai-provider-text">
+                <i data-lucide="sparkles" class="option-icon" style="color:var(--accent);"></i>
+                <span>Google Gemini</span>
+              </span>
+              <i data-lucide="chevron-down" class="custom-select-arrow"></i>
+            </button>
+            <div class="custom-select-menu hidden" id="menu-ai-provider" role="listbox">
+              <div class="custom-select-option active" data-value="gemini" role="option">
+                <div class="option-content">
+                  <i data-lucide="sparkles" class="option-icon" style="color:var(--accent);"></i>
+                  <span>Google Gemini</span>
+                </div>
+                <i data-lucide="check" class="option-check"></i>
+              </div>
+              <div class="custom-select-option" data-value="openai" role="option">
+                <div class="option-content">
+                  <i data-lucide="bot" class="option-icon"></i>
+                  <span>OpenAI</span>
+                </div>
+                <i data-lucide="check" class="option-check hidden"></i>
+              </div>
+            </div>
+            <input type="hidden" id="setting-ai-provider" value="gemini">
+          </div>
+        </div>
+        <div class="form-group" id="group-gemini-key">
+          <label class="form-label" for="setting-gemini-key">Google Gemini API Key</label>
+          <div class="input-with-action">
+            <input type="password" class="form-input" id="setting-gemini-key" placeholder="AIzaSy... (leave blank to use Smart Engine)">
+            <button class="btn btn-ghost btn-icon btn-sm input-action-btn" type="button" id="toggle-gemini-key-vis" title="Toggle visibility">
+              <i data-lucide="eye" style="width:14px;height:14px;"></i>
+            </button>
+          </div>
+          <p class="form-hint">Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Google AI Studio</a>. GitPulse uses its Smart Engine if omitted or invalid.</p>
+        </div>
+        <div class="form-group hidden" id="group-openai-key">
+          <label class="form-label" for="setting-openai-key">OpenAI API Key</label>
+          <div class="input-with-action">
+            <input type="password" class="form-input" id="setting-openai-key" placeholder="sk-proj-... (leave blank to use Smart Engine)">
+            <button class="btn btn-ghost btn-icon btn-sm input-action-btn" type="button" id="toggle-openai-key-vis" title="Toggle visibility">
+              <i data-lucide="eye" style="width:14px;height:14px;"></i>
+            </button>
+          </div>
+          <p class="form-hint">Get a key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">OpenAI Platform</a>.</p>
         </div>
         <div class="form-group">
           <label class="form-label">Notification Quiet Start</label>
@@ -279,11 +368,39 @@
         </div>
         <div class="form-group">
           <label class="form-label">Theme</label>
-          <select class="form-select" id="setting-theme">
-            <option value="system">System</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
+          <div class="custom-select" id="dropdown-theme">
+            <button class="custom-select-trigger" type="button" id="trigger-theme" aria-haspopup="listbox" aria-expanded="false">
+              <span class="custom-select-label" id="label-theme-text">
+                <i data-lucide="monitor" class="option-icon" style="color:var(--accent);"></i>
+                <span>System</span>
+              </span>
+              <i data-lucide="chevron-down" class="custom-select-arrow"></i>
+            </button>
+            <div class="custom-select-menu hidden" id="menu-theme" role="listbox">
+              <div class="custom-select-option active" data-value="system" role="option">
+                <div class="option-content">
+                  <i data-lucide="monitor" class="option-icon"></i>
+                  <span>System</span>
+                </div>
+                <i data-lucide="check" class="option-check"></i>
+              </div>
+              <div class="custom-select-option" data-value="dark" role="option">
+                <div class="option-content">
+                  <i data-lucide="moon" class="option-icon"></i>
+                  <span>Dark</span>
+                </div>
+                <i data-lucide="check" class="option-check hidden"></i>
+              </div>
+              <div class="custom-select-option" data-value="light" role="option">
+                <div class="option-content">
+                  <i data-lucide="sun" class="option-icon"></i>
+                  <span>Light</span>
+                </div>
+                <i data-lucide="check" class="option-check hidden"></i>
+              </div>
+            </div>
+            <input type="hidden" id="setting-theme" value="system">
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -315,6 +432,6 @@
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.2"></script>
 </body>
 </html>

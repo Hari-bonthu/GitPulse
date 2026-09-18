@@ -8,7 +8,8 @@ __pycache__/
 env/
 venv/
 
-# App state
+# App state & user configuration
+config.json
 notification_state.json
 
 # IDE

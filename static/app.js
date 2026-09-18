@@ -16,6 +16,7 @@ const state = {
   refreshTimer: null,
   autoRefreshEnabled: true,
   commitAction: 'commit', // 'commit' or 'commit-push'
+  refreshIntervalSeconds: 60,
   stagedFiles: new Set(),
   expandedDirs: new Set(),
 };
@@ -199,6 +200,19 @@ function renderDashboard(data) {
   $('#stat-unpushed').textContent = data.repos_with_unpushed;
   $('#stat-stale').textContent = data.stale_repos;
 
+  // Update sidebar repo count
+  const navCount = $('#sidebar-repo-count');
+  if (navCount) navCount.textContent = data.total_repos;
+
+  // Active navigation states
+  if (!state.selectedRepoId) {
+    $('#sidebar-dashboard-btn')?.classList.add('active');
+    $('#header-dashboard-btn')?.classList.add('active');
+  } else {
+    $('#sidebar-dashboard-btn')?.classList.remove('active');
+    $('#header-dashboard-btn')?.classList.remove('active');
+  }
+
   // Sidebar
   renderSidebar(data.repo_summaries);
 
@@ -292,9 +306,15 @@ function renderSidebar(repos) {
 
 // --- Detail View ---
 async function selectRepo(repoId) {
+  if (state.selectedRepoId !== repoId) {
+    state.stagedFiles.clear();
+    state.expandedDirs.clear();
+  }
   state.selectedRepoId = repoId;
 
-  // Update sidebar active state
+  // Update sidebar active state & dashboard buttons
+  $('#sidebar-dashboard-btn')?.classList.remove('active');
+  $('#header-dashboard-btn')?.classList.remove('active');
   $$('.repo-card').forEach(c => c.classList.toggle('active', c.dataset.repoId === repoId));
 
   // Show detail view
@@ -322,7 +342,7 @@ function renderRepoDetail(status, tree, log, stash) {
   $('#detail-title').innerHTML = `
     ${statusIcon(status.health)}
     <span>${esc(status.name)}</span>
-    <button class="btn btn-danger btn-sm" onclick="confirmRemoveRepo('${esc(status.id)}')" style="margin-left:auto;">
+    <button class="btn btn-danger btn-sm" onclick="confirmRemoveRepo('${esc(status.id)}')" style="margin-left:auto;" title="Stop tracking this repository">
       <i data-lucide="trash-2" style="width:12px;height:12px;"></i>
       Remove
     </button>
@@ -349,6 +369,7 @@ function renderRepoDetail(status, tree, log, stash) {
   // Tree
   renderGitTree(tree);
   $('#tree-count').textContent = status.changed_files.length;
+  updateSelectionUI();
 
   // Stash
   renderStashList(stash);
@@ -366,6 +387,60 @@ function renderRepoDetail(status, tree, log, stash) {
   refreshIcons();
 }
 
+// --- Git Tree Helpers (Emil Kowalski Design) ---
+function fileIconName(filename) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  if (filename === '.gitignore' || filename === '.gitmodules') return 'git-commit-horizontal';
+  if (filename.startsWith('.env')) return 'key-round';
+  if (ext === 'js' || ext === 'ts' || ext === 'jsx' || ext === 'tsx') return 'file-code-2';
+  if (ext === 'py') return 'file-terminal';
+  if (ext === 'json') return 'braces';
+  if (ext === 'html') return 'file-code';
+  if (ext === 'css' || ext === 'scss') return 'palette';
+  if (ext === 'md' || ext === 'txt') return 'file-text';
+  if (ext === 'bat' || ext === 'sh' || ext === 'ps1') return 'terminal';
+  if (ext === 'svg' || ext === 'png' || ext === 'jpg' || ext === 'ico') return 'image';
+  return 'file';
+}
+
+function statusBadgeLabel(status) {
+  const map = {
+    MODIFIED: 'M',
+    ADDED: 'A',
+    DELETED: 'D',
+    UNTRACKED: 'U',
+    RENAMED: 'R',
+    COPIED: 'C',
+  };
+  return map[status] || 'M';
+}
+
+function syncCheckboxes() {
+  const allFiles = (state.repoDetail?.changed_files || []).map(f => f.path);
+
+  // Update file checkboxes
+  $$('.custom-checkbox.file-checkbox').forEach(cb => {
+    const file = cb.dataset.file;
+    if (file) {
+      cb.classList.toggle('checked', state.stagedFiles.has(file));
+    }
+  });
+
+  // Update folder checkboxes
+  $$('.custom-checkbox.dir-checkbox').forEach(cb => {
+    const dir = cb.dataset.dir;
+    if (dir) {
+      const dirFiles = allFiles.filter(f => f === dir || f.startsWith(dir + '/'));
+      const selectedCount = dirFiles.filter(f => state.stagedFiles.has(f)).length;
+      const allSelected = dirFiles.length > 0 && selectedCount === dirFiles.length;
+      const isIndeterminate = selectedCount > 0 && !allSelected;
+
+      cb.classList.toggle('checked', allSelected);
+      cb.classList.toggle('indeterminate', isIndeterminate);
+    }
+  });
+}
+
 // --- Git Tree ---
 function renderGitTree(nodes) {
   const container = $('#git-tree');
@@ -378,35 +453,57 @@ function renderGitTree(nodes) {
     return;
   }
 
-  state.stagedFiles.clear();
   container.innerHTML = buildTreeHTML(nodes, 0);
   refreshIcons();
 }
 
 function buildTreeHTML(nodes, level) {
+  const allFiles = (state.repoDetail?.changed_files || []).map(f => f.path);
+
   return nodes.map(node => {
-    const indent = `<span class="tree-indent" style="width:${level * 20}px;"></span>`;
+    const indent = `<span class="tree-indent" style="width:${level * 16}px;"></span>`;
 
     if (node.is_dir) {
       const isExpanded = state.expandedDirs.has(node.path);
       const childrenHTML = isExpanded ? buildTreeHTML(node.children || [], level + 1) : '';
+
+      const dirFiles = allFiles.filter(f => f === node.path || f.startsWith(node.path + '/'));
+      const selectedCount = dirFiles.filter(f => state.stagedFiles.has(f)).length;
+      const allDirSelected = dirFiles.length > 0 && selectedCount === dirFiles.length;
+      const isIndeterminate = selectedCount > 0 && !allDirSelected;
+
+      let checkboxCls = 'custom-checkbox dir-checkbox';
+      if (allDirSelected) checkboxCls += ' checked';
+      else if (isIndeterminate) checkboxCls += ' indeterminate';
+
       return `
         <div class="tree-item" onclick="toggleTreeDir('${esc(node.path)}')">
           ${indent}
           <i data-lucide="chevron-down" class="tree-toggle ${isExpanded ? '' : 'collapsed'}" style="width:14px;height:14px;"></i>
+          <span class="${checkboxCls}" data-dir="${esc(node.path)}" onclick="event.stopPropagation();toggleStageDir('${esc(node.path)}')" title="Select/deselect folder">
+            <i data-lucide="check" class="custom-checkbox-check"></i>
+          </span>
           <i data-lucide="folder${isExpanded ? '-open' : ''}" class="tree-item-icon dir" style="width:14px;height:14px;"></i>
-          <span class="tree-item-name">${esc(node.name)}</span>
+          <span class="tree-item-name" style="font-weight:600;">${esc(node.name)}</span>
+          <span style="font-size:11px;color:var(--text-muted);margin-left:auto;">${dirFiles.length}</span>
         </div>
         <div class="tree-children" data-dir="${esc(node.path)}">${childrenHTML}</div>
       `;
     } else {
       const statusCls = (node.status || 'MODIFIED').toLowerCase();
+      const isChecked = state.stagedFiles.has(node.path);
+      const icon = fileIconName(node.name);
+      const badge = statusBadgeLabel(node.status);
+
       return `
         <div class="tree-item" onclick="showFileDiff('${esc(node.path)}')" data-file="${esc(node.path)}">
           ${indent}
-          <input type="checkbox" class="tree-item-checkbox" onclick="event.stopPropagation();toggleStageFile('${esc(node.path)}')" ${state.stagedFiles.has(node.path) ? 'checked' : ''}>
-          ${fileStatusIcon(node.status)}
-          <span class="tree-item-name ${statusCls}">${esc(node.name)}</span>
+          <span class="custom-checkbox file-checkbox ${isChecked ? 'checked' : ''}" data-file="${esc(node.path)}" onclick="event.stopPropagation();toggleStageFile('${esc(node.path)}')" title="Select for commit">
+            <i data-lucide="check" class="custom-checkbox-check"></i>
+          </span>
+          <i data-lucide="${icon}" class="tree-file-icon"></i>
+          <span class="tree-item-name">${esc(node.name)}</span>
+          <span class="git-status-badge ${statusCls}">${badge}</span>
         </div>
       `;
     }
@@ -419,10 +516,41 @@ window.toggleTreeDir = function(path) {
   } else {
     state.expandedDirs.add(path);
   }
-  // Re-render tree with current data
   if (state.selectedRepoId) {
     api('GET', `/repos/${state.selectedRepoId}/tree`).then(tree => renderGitTree(tree));
   }
+};
+
+window.toggleSelectAll = function() {
+  if (!state.repoDetail) return;
+  const allFiles = (state.repoDetail.changed_files || []).map(f => f.path);
+  if (allFiles.length === 0) return;
+
+  if (state.stagedFiles.size === allFiles.length) {
+    state.stagedFiles.clear();
+  } else {
+    allFiles.forEach(f => state.stagedFiles.add(f));
+  }
+
+  syncCheckboxes();
+  updateSelectionUI();
+};
+
+window.toggleStageDir = function(dirPath) {
+  if (!state.repoDetail) return;
+  const allFiles = (state.repoDetail.changed_files || []).map(f => f.path);
+  const dirFiles = allFiles.filter(f => f === dirPath || f.startsWith(dirPath + '/'));
+  if (dirFiles.length === 0) return;
+
+  const allSelected = dirFiles.every(f => state.stagedFiles.has(f));
+  if (allSelected) {
+    dirFiles.forEach(f => state.stagedFiles.delete(f));
+  } else {
+    dirFiles.forEach(f => state.stagedFiles.add(f));
+  }
+
+  syncCheckboxes();
+  updateSelectionUI();
 };
 
 window.toggleStageFile = function(path) {
@@ -431,16 +559,49 @@ window.toggleStageFile = function(path) {
   } else {
     state.stagedFiles.add(path);
   }
+
+  syncCheckboxes();
+  updateSelectionUI();
 };
+
+function updateSelectionUI() {
+  const allFiles = (state.repoDetail?.changed_files || []).map(f => f.path);
+  const total = allFiles.length;
+  const count = state.stagedFiles.size;
+
+  const label = $('#toggle-stage-all-label');
+  const icon = $('#toggle-stage-all-icon');
+  const summary = $('#selected-files-summary');
+  const hint = $('#commit-selection-hint');
+
+  if (count === 0) {
+    if (label) label.textContent = 'Select All';
+    if (icon) icon.setAttribute('data-lucide', 'check-square');
+    if (summary) summary.textContent = '';
+    if (hint) hint.textContent = total > 0 ? `All ${total} changed files will be committed` : '';
+  } else if (count === total) {
+    if (label) label.textContent = 'Deselect All';
+    if (icon) icon.setAttribute('data-lucide', 'square');
+    if (summary) summary.textContent = `All ${total} selected`;
+    if (hint) hint.textContent = `All ${total} files selected for commit`;
+  } else {
+    if (label) label.textContent = 'Deselect All';
+    if (icon) icon.setAttribute('data-lucide', 'minus-square');
+    if (summary) summary.textContent = `${count} of ${total} selected`;
+    if (hint) hint.textContent = `${count} of ${total} files selected for commit`;
+  }
+
+  refreshIcons();
+}
 
 // --- Diff ---
 window.showFileDiff = async function(filePath) {
   if (!state.selectedRepoId) return;
 
-  // Highlight selected file
-  $$('.tree-item').forEach(el => el.classList.remove('selected'));
+  // Highlight active diff
+  $$('.tree-item').forEach(el => el.classList.remove('active-diff'));
   const fileEl = document.querySelector(`.tree-item[data-file="${CSS.escape(filePath)}"]`);
-  if (fileEl) fileEl.classList.add('selected');
+  if (fileEl) fileEl.classList.add('active-diff');
 
   $('#diff-filename').textContent = filePath;
 
@@ -554,6 +715,8 @@ window.backToDashboard = function() {
   $('#detail-view').classList.add('hidden');
   $('#dashboard-view').classList.remove('hidden');
   $$('.repo-card').forEach(c => c.classList.remove('active'));
+  $('#sidebar-dashboard-btn')?.classList.add('active');
+  $('#header-dashboard-btn')?.classList.add('active');
   refreshAll();
 };
 
@@ -681,10 +844,19 @@ window.handleGenerateAI = async function() {
   const btn = $('#ai-generate-btn');
   btn.disabled = true;
 
+  const stagedFiles = Array.from(state.stagedFiles);
+
   try {
     const result = await Toast.promise(
-      api('POST', '/ai/generate-commit', { repo_id: state.selectedRepoId }),
-      { loading: 'Generating commit message...', success: (r) => `Generated via ${r.provider}`, error: (e) => e.message }
+      api('POST', '/ai/generate-commit', {
+        repo_id: state.selectedRepoId,
+        files: stagedFiles.length > 0 ? stagedFiles : null,
+      }),
+      {
+        loading: 'Analyzing changes & generating message...',
+        success: (r) => `Generated via ${r.provider}`,
+        error: (e) => e.message || 'Failed to generate commit message'
+      }
     );
     $('#commit-message').value = result.message;
     $('#commit-message').focus();
@@ -694,25 +866,46 @@ window.handleGenerateAI = async function() {
 };
 
 // --- Settings ---
+function updateAIKeyVisibility(provider) {
+  const geminiGroup = $('#group-gemini-key');
+  const openaiGroup = $('#group-openai-key');
+  if (provider === 'gemini') {
+    geminiGroup?.classList.remove('hidden');
+    openaiGroup?.classList.add('hidden');
+  } else if (provider === 'openai') {
+    geminiGroup?.classList.add('hidden');
+    openaiGroup?.classList.remove('hidden');
+  } else {
+    geminiGroup?.classList.add('hidden');
+    openaiGroup?.classList.add('hidden');
+  }
+}
+
 function openSettings() {
   $('#settings-modal').classList.remove('hidden');
   if (state.settings) {
     $('#setting-staleness').value = state.settings.staleness_threshold_days;
-    $('#setting-ai-provider').value = state.settings.ai_provider;
+    const provider = state.settings.ai_provider || 'gemini';
+    setCustomSelectValue('#dropdown-ai-provider', provider);
+    updateAIKeyVisibility(provider);
+    if ($('#setting-gemini-key')) $('#setting-gemini-key').value = state.settings.gemini_api_key || '';
+    if ($('#setting-openai-key')) $('#setting-openai-key').value = state.settings.openai_api_key || '';
     $('#setting-quiet-start').value = state.settings.notification_quiet_start || '22:00';
     $('#setting-quiet-end').value = state.settings.notification_quiet_end || '08:00';
-    $('#setting-theme').value = state.settings.theme;
+    setCustomSelectValue('#dropdown-theme', state.settings.theme || 'system');
   }
 }
 
 async function saveSettings() {
   const settings = {
     staleness_threshold_days: parseInt($('#setting-staleness').value) || 3,
-    auto_refresh_seconds: parseInt($('#refresh-interval').value) || 60,
-    ai_provider: $('#setting-ai-provider').value,
-    notification_quiet_start: $('#setting-quiet-start').value,
-    notification_quiet_end: $('#setting-quiet-end').value,
-    theme: $('#setting-theme').value,
+    auto_refresh_seconds: state.refreshIntervalSeconds || 60,
+    ai_provider: $('#setting-ai-provider')?.value || 'gemini',
+    gemini_api_key: $('#setting-gemini-key')?.value?.trim() || '',
+    openai_api_key: $('#setting-openai-key')?.value?.trim() || '',
+    notification_quiet_start: $('#setting-quiet-start')?.value || '22:00',
+    notification_quiet_end: $('#setting-quiet-end')?.value || '08:00',
+    theme: $('#setting-theme')?.value || 'system',
   };
 
   try {
@@ -758,7 +951,7 @@ function showConfirm(title, message, onConfirm) {
 function startAutoRefresh() {
   stopAutoRefresh();
   if (!state.autoRefreshEnabled) return;
-  const interval = parseInt($('#refresh-interval').value) * 1000;
+  const interval = (state.refreshIntervalSeconds || 60) * 1000;
   state.refreshTimer = setInterval(() => {
     if (state.selectedRepoId) {
       selectRepo(state.selectedRepoId);
@@ -808,32 +1001,174 @@ function setupSectionToggles() {
   });
 }
 
+// --- Custom Select Dropdown System (Emil Kowalski Design) ---
+function setCustomSelectValue(containerSelector, value) {
+  const container = typeof containerSelector === 'string' ? $(containerSelector) : containerSelector;
+  if (!container) return;
+  const hiddenInput = container.querySelector('input[type="hidden"]');
+  if (hiddenInput) hiddenInput.value = value;
+
+  const options = container.querySelectorAll('.custom-select-option');
+  let matchedOption = null;
+  options.forEach(opt => {
+    const isMatch = opt.dataset.value === String(value);
+    opt.classList.toggle('active', isMatch);
+    const check = opt.querySelector('.option-check');
+    if (check) check.classList.toggle('hidden', !isMatch);
+    if (isMatch) matchedOption = opt;
+  });
+
+  if (matchedOption) {
+    const triggerLabel = container.querySelector('.custom-select-label');
+    const optContent = matchedOption.querySelector('.option-content');
+    if (triggerLabel && optContent) {
+      triggerLabel.innerHTML = optContent.innerHTML;
+    }
+  }
+  refreshIcons();
+}
+
+function setupCustomSelect(containerSelector, onChange) {
+  const container = typeof containerSelector === 'string' ? $(containerSelector) : containerSelector;
+  if (!container) return;
+  const trigger = container.querySelector('.custom-select-trigger');
+  const menu = container.querySelector('.custom-select-menu');
+  const hiddenInput = container.querySelector('input[type="hidden"]');
+
+  if (!trigger || !menu) return;
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpening = menu.classList.contains('hidden');
+    // Close any other open custom selects or dropdowns
+    $$('.custom-select-menu').forEach(m => {
+      if (m !== menu) {
+        m.classList.add('hidden');
+        m.closest('.custom-select')?.classList.remove('open');
+        m.closest('.custom-select')?.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    menu.classList.toggle('hidden');
+    container.classList.toggle('open', isOpening);
+    trigger.setAttribute('aria-expanded', isOpening ? 'true' : 'false');
+  });
+
+  menu.addEventListener('click', (e) => {
+    const option = e.target.closest('.custom-select-option');
+    if (!option) return;
+    const value = option.dataset.value;
+    setCustomSelectValue(container, value);
+    menu.classList.add('hidden');
+    container.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+
+    if (typeof onChange === 'function') {
+      onChange(value);
+    }
+  });
+}
+
+// --- Refresh Interval Custom Dropdown ---
+function setupRefreshDropdown() {
+  const btn = $('#refresh-interval-btn');
+  const menu = $('#refresh-interval-menu');
+  const label = $('#refresh-interval-label');
+
+  if (!btn || !menu) return;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  });
+
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.custom-dropdown-item');
+    if (!item) return;
+    const val = parseInt(item.dataset.value);
+    state.refreshIntervalSeconds = val;
+    if (label) label.textContent = item.querySelector('span').textContent;
+
+    $$('#refresh-interval-menu .custom-dropdown-item').forEach(el => {
+      const isCurrent = el.dataset.value === String(val);
+      el.classList.toggle('active', isCurrent);
+      const chk = el.querySelector('.item-check');
+      if (chk) chk.classList.toggle('hidden', !isCurrent);
+    });
+
+    menu.classList.add('hidden');
+    refreshIcons();
+    if (state.autoRefreshEnabled) startAutoRefresh();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#refresh-interval-dropdown')) {
+      menu.classList.add('hidden');
+    }
+  });
+}
+
 // --- Commit Dropdown ---
 function setupCommitDropdown() {
   const toggle = $('#commit-toggle-btn');
   const menu = $('#commit-menu');
   const mainBtn = $('#commit-main-btn');
   const label = $('#commit-btn-label');
+  const icon = $('#commit-main-icon');
+
+  if (!toggle || !menu) return;
 
   toggle.addEventListener('click', (e) => {
     e.stopPropagation();
     menu.classList.toggle('hidden');
+    const chevron = toggle.querySelector('[data-lucide]');
+    if (chevron) {
+      const isClosed = menu.classList.contains('hidden');
+      chevron.setAttribute('data-lucide', isClosed ? 'chevron-up' : 'chevron-down');
+      refreshIcons();
+    }
   });
 
   mainBtn.addEventListener('click', handleCommit);
 
   menu.addEventListener('click', (e) => {
-    const item = e.target.closest('.dropdown-item');
+    const item = e.target.closest('.commit-dropdown-item');
     if (!item) return;
     const action = item.dataset.action;
     state.commitAction = action;
-    label.textContent = action === 'commit-push' ? 'Commit & Push' : 'Commit';
+
+    // Update active checkmarks
+    $$('.commit-dropdown-item').forEach(el => {
+      const isCurrent = el.dataset.action === action;
+      el.classList.toggle('active', isCurrent);
+      const chk = el.querySelector('.action-check');
+      if (chk) chk.classList.toggle('hidden', !isCurrent);
+    });
+
+    // Update main button label and icon
+    if (action === 'commit-push') {
+      label.textContent = 'Commit & Push';
+      icon?.setAttribute('data-lucide', 'upload');
+    } else {
+      label.textContent = 'Commit';
+      icon?.setAttribute('data-lucide', 'git-commit-horizontal');
+    }
+
     menu.classList.add('hidden');
-    handleCommit();
+    const chevron = toggle.querySelector('[data-lucide]');
+    if (chevron) chevron.setAttribute('data-lucide', 'chevron-up');
+    refreshIcons();
   });
 
   // Close on outside click
-  document.addEventListener('click', () => menu.classList.add('hidden'));
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#commit-dropdown')) {
+      menu.classList.add('hidden');
+      const chevron = toggle.querySelector('[data-lucide]');
+      if (chevron) chevron.setAttribute('data-lucide', 'chevron-up');
+      refreshIcons();
+    }
+  });
 }
 
 // ============================================
@@ -844,14 +1179,49 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     state.settings = await api('GET', '/settings');
     applyTheme(state.settings.theme);
+    setCustomSelectValue('#dropdown-theme', state.settings.theme || 'system');
+    setCustomSelectValue('#dropdown-ai-provider', state.settings.ai_provider || 'gemini');
   } catch {}
+
+  // Setup custom selects
+  setupCustomSelect('#dropdown-ai-provider', (provider) => {
+    updateAIKeyVisibility(provider);
+  });
+  setupCustomSelect('#dropdown-theme', (theme) => {
+    applyTheme(theme);
+  });
+
+  // Setup key visibility toggles
+  $('#toggle-gemini-key-vis')?.addEventListener('click', () => {
+    const input = $('#setting-gemini-key');
+    const icon = $('#toggle-gemini-key-vis [data-lucide]');
+    if (!input) return;
+    const isPass = input.type === 'password';
+    input.type = isPass ? 'text' : 'password';
+    if (icon) icon.setAttribute('data-lucide', isPass ? 'eye-off' : 'eye');
+    refreshIcons();
+  });
+
+  $('#toggle-openai-key-vis')?.addEventListener('click', () => {
+    const input = $('#setting-openai-key');
+    const icon = $('#toggle-openai-key-vis [data-lucide]');
+    if (!input) return;
+    const isPass = input.type === 'password';
+    input.type = isPass ? 'text' : 'password';
+    if (icon) icon.setAttribute('data-lucide', isPass ? 'eye-off' : 'eye');
+    refreshIcons();
+  });
 
   // Initial load
   await refreshAll();
   await fetchNotifications();
 
-  // Event listeners
-  $('#back-to-dashboard').addEventListener('click', backToDashboard);
+  // Navigation Event listeners
+  $('#app-logo')?.addEventListener('click', backToDashboard);
+  $('#header-dashboard-btn')?.addEventListener('click', backToDashboard);
+  $('#sidebar-dashboard-btn')?.addEventListener('click', backToDashboard);
+  $('#back-to-dashboard')?.addEventListener('click', backToDashboard);
+
   $('#refresh-btn').addEventListener('click', () => {
     Toast.info('Refreshing...');
     if (state.selectedRepoId) selectRepo(state.selectedRepoId);
@@ -894,7 +1264,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.autoRefreshEnabled) startAutoRefresh();
     else stopAutoRefresh();
   });
-  $('#refresh-interval').addEventListener('change', () => { if (state.autoRefreshEnabled) startAutoRefresh(); });
+  setupRefreshDropdown();
 
   // Section toggles
   setupSectionToggles();
@@ -922,6 +1292,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Close custom select dropdowns on outside click
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.custom-select')) {
+      $$('.custom-select-menu').forEach(m => {
+        m.classList.add('hidden');
+        m.closest('.custom-select')?.classList.remove('open');
+        m.closest('.custom-select')?.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+      });
+    }
+  });
+
   // Close modals on overlay click
   $$('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', (e) => {
@@ -942,3 +1323,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Make functions globally accessible for inline onclick handlers
 window.selectRepo = selectRepo;
 window.openAddRepoModal = openAddRepoModal;
+window.backToDashboard = backToDashboard;
+window.toggleSelectAll = toggleSelectAll;
+window.toggleStageDir = toggleStageDir;
+window.toggleStageFile = toggleStageFile;
+window.toggleTreeDir = toggleTreeDir;
+window.showFileDiff = showFileDiff;
+window.handleCommit = handleCommit;
+window.handleGenerateAI = handleGenerateAI;
+window.handleStash = handleStash;
+window.confirmRemoveRepo = confirmRemoveRepo;
