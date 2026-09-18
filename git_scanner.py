@@ -366,6 +366,36 @@ def push_changes(repo_path: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
+def publish_repo_to_remote(repo_path: str, remote_url: str, remote_name: str = "origin") -> Tuple[bool, str]:
+    try:
+        repo = Repo(repo_path)
+        url = remote_url.strip()
+        if not url:
+            return False, "Remote URL cannot be empty"
+
+        # Check if remote already exists
+        existing_names = [r.name for r in repo.remotes]
+        if remote_name in existing_names:
+            remote = repo.remote(remote_name)
+            remote.set_url(url)
+        else:
+            remote = repo.create_remote(remote_name, url)
+
+        # Active branch
+        try:
+            branch_name = repo.active_branch.name
+        except Exception:
+            branch_name = repo.git.symbolic_ref('--short', 'HEAD')
+
+        # Push with -u
+        repo.git.push('-u', remote_name, branch_name)
+        return True, f"Successfully published to {url} ({remote_name}/{branch_name})"
+    except git.GitCommandError as e:
+        err = e.stderr.strip() if e.stderr else str(e)
+        return False, err
+    except Exception as e:
+        return False, str(e)
+
 def apply_stash(repo_path: str, index: int = 0) -> Tuple[bool, str]:
     try:
         repo = Repo(repo_path)

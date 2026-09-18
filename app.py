@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from models import (
-    AppConfig, Settings, RepoConfig, AddRepoRequest, InitRepoRequest, CommitRequest,
+    AppConfig, Settings, RepoConfig, AddRepoRequest, InitRepoRequest, PublishRepoRequest, CommitRequest,
     StageRequest, GenerateCommitMessageRequest, GenerateCommitMessageResponse,
     DashboardSummary, RepoStatus, RepoSummary, RepoHealth, TreeNode,
     CommitEntry, StashEntry, ChangedFile
@@ -25,7 +25,7 @@ from git_scanner import (
     get_changed_files, build_file_tree, get_branch_info, get_commit_log,
     get_stash_list, get_diff_for_file, stage_files, unstage_files,
     commit_changes, push_changes, apply_stash, pop_stash, drop_stash,
-    check_repo_access, init_repo
+    check_repo_access, init_repo, publish_repo_to_remote
 )
 from ai_commit import generate_commit_message
 from notifier import NotificationManager, NotificationScheduler
@@ -372,6 +372,21 @@ async def push(repo_id: str):
         raise HTTPException(status_code=403, detail=f"Access denied: {access_msg}")
 
     ok, result = push_changes(path)
+    if not ok:
+        raise HTTPException(status_code=400, detail=result)
+    return {"message": result}
+
+
+@app.post("/api/repos/{repo_id}/publish")
+async def publish_repo(repo_id: str, req: PublishRepoRequest):
+    path = _find_repo_path(repo_id)
+
+    # Verify access
+    has_access, access_msg = check_repo_access(path)
+    if not has_access:
+        raise HTTPException(status_code=403, detail=f"Access denied: {access_msg}")
+
+    ok, result = publish_repo_to_remote(path, req.remote_url, req.remote_name)
     if not ok:
         raise HTTPException(status_code=400, detail=result)
     return {"message": result}

@@ -91,6 +91,10 @@ class InitRepoRequest(BaseModel):
     default_branch: str = "main"
     create_gitignore: bool = True
 
+class PublishRepoRequest(BaseModel):
+    remote_url: str
+    remote_name: str = "origin"
+
 class CommitRequest(BaseModel):
     message: str
     files: Optional[List[str]] = None

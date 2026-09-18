@@ -127,11 +127,11 @@ def generate_semantic_commit_message(diff_text: str, changed_files: Optional[Lis
 def generate_commit_message_gemini(diff_text: str, api_key: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Calls Google Gemini API. Returns (message, None) on success or (None, error_str) on failure.
+    Tries gemini-3.6-flash, gemini-3-flash-preview, gemini-flash-latest with resilient fallbacks.
     """
     if not api_key:
         return None, "No Gemini API key provided"
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     prompt = f"""Analyze this git diff and generate a concise conventional commit message.
 Format: <type>(<optional scope>): <description>
 Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build
@@ -147,33 +147,47 @@ Diff:
     data = {
         "contents": [{"parts": [{"text": prompt}]}]
     }
+    body = json.dumps(data).encode("utf-8")
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
+    models_to_try = [
+        "gemini-3.6-flash",
+        "gemini-3-flash-preview",
+        "gemini-flash-latest",
+        "gemini-2.5-flash"
+    ]
 
-    try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            res_body = response.read().decode("utf-8")
-            res_json = json.loads(res_body)
-            msg = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-            msg = msg.strip("`").strip()
-            lines = [l.strip() for l in msg.splitlines() if l.strip()]
-            return (lines[0] if lines else msg), None
-    except urllib.error.HTTPError as e:
-        err_msg = f"HTTP {e.code}"
-        if e.code == 401:
-            err_msg = "Invalid API key"
-        elif e.code == 429:
-            err_msg = "Rate limit exceeded"
-        return None, err_msg
-    except urllib.error.URLError:
-        return None, "Network error"
-    except Exception as e:
-        return None, str(e)
+    last_err = "No models available"
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                res_body = response.read().decode("utf-8")
+                res_json = json.loads(res_body)
+                msg = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+                msg = msg.strip("`").strip()
+                lines = [l.strip() for l in msg.splitlines() if l.strip()]
+                return (lines[0] if lines else msg), None
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return None, "Invalid API key"
+            elif e.code == 429:
+                return None, "Rate limit exceeded"
+            elif e.code == 404:
+                last_err = f"HTTP {e.code}"
+                continue
+            last_err = f"HTTP {e.code}"
+        except urllib.error.URLError:
+            last_err = "Network error"
+        except Exception as e:
+            last_err = str(e)
+
+    return None, last_err
 
 
 def generate_commit_message_openai(diff_text: str, api_key: str) -> Tuple[Optional[str], Optional[str]]:

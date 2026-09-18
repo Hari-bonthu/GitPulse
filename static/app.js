@@ -388,17 +388,25 @@ function renderRepoDetail(status, tree, log, stash) {
   `;
 
   // Branch bar
+  const hasRemote = Boolean(status.branch.remote_name);
   $('#branch-bar').innerHTML = `
     <div class="branch-tag">
       <i data-lucide="git-branch" style="width:14px;height:14px;"></i>
       ${esc(status.branch.name)}
     </div>
-    ${status.branch.remote_name ? `<span style="color:var(--text-muted);font-size:12px;">→ ${esc(status.branch.remote_name)}</span>` : ''}
-    <div class="ahead-behind">
-      ${status.branch.ahead > 0 ? `<span class="ahead">↑ ${status.branch.ahead} ahead</span>` : ''}
-      ${status.branch.behind > 0 ? `<span class="behind">↓ ${status.branch.behind} behind</span>` : ''}
-      ${status.branch.ahead === 0 && status.branch.behind === 0 ? `<span style="color:var(--success);">Up to date</span>` : ''}
-    </div>
+    ${hasRemote ? `<span style="color:var(--text-muted);font-size:12px;">→ ${esc(status.branch.remote_name)}</span>` : `
+      <button class="btn btn-primary btn-sm" onclick="openPublishModal()" style="gap:6px;padding:3px 9px;" title="Publish this local repository to GitHub">
+        <i data-lucide="cloud-upload" style="width:13px;height:13px;"></i>
+        <span>Publish to GitHub</span>
+      </button>
+    `}
+    ${hasRemote ? `
+      <div class="ahead-behind">
+        ${status.branch.ahead > 0 ? `<span class="ahead">↑ ${status.branch.ahead} ahead</span>` : ''}
+        ${status.branch.behind > 0 ? `<span class="behind">↓ ${status.branch.behind} behind</span>` : ''}
+        ${status.branch.ahead === 0 && status.branch.behind === 0 ? `<span style="color:var(--success);">Up to date</span>` : ''}
+      </div>
+    ` : ''}
     <div style="flex:1;"></div>
     <span style="font-size:12px;color:var(--text-muted);">
       ${status.last_commit_time ? `Last commit: ${esc(status.last_commit_time)}` : 'No commits'}
@@ -893,6 +901,21 @@ window.handleCommit = async function() {
   const id = state.selectedRepoId;
 
   if (state.commitAction === 'commit-push') {
+    if (!state.repoDetail?.branch?.remote_name) {
+      try {
+        await Toast.promise(
+          api('POST', `/repos/${id}/commit`, { message, files }),
+          { loading: 'Committing...', success: 'Committed locally!', error: (e) => e.message }
+        );
+        $('#commit-message').value = '';
+        state.stagedFiles.clear();
+        await selectRepo(id);
+        Toast.info('Repository is not on GitHub yet. Enter remote URL to push.');
+        openPublishModal();
+      } catch {}
+      return;
+    }
+
     try {
       await Toast.promise(
         api('POST', `/repos/${id}/commit-push`, { message, files }),
@@ -912,6 +935,49 @@ window.handleCommit = async function() {
       state.stagedFiles.clear();
       selectRepo(id);
     } catch {}
+  }
+};
+
+// --- Publish to GitHub ---
+window.openPublishModal = function() {
+  $('#publish-modal')?.classList.remove('hidden');
+  $('#publish-remote-url').value = '';
+  $('#publish-url-error')?.classList.add('hidden');
+  $('#publish-remote-url')?.focus();
+  refreshIcons();
+};
+
+function closePublishModal() {
+  $('#publish-modal')?.classList.add('hidden');
+  $('#publish-url-error')?.classList.add('hidden');
+}
+
+async function handlePublishRepo() {
+  if (!state.selectedRepoId) return;
+  const url = $('#publish-remote-url').value.trim();
+  $('#publish-url-error')?.classList.add('hidden');
+
+  if (!url) {
+    $('#publish-url-error').textContent = 'Please enter a GitHub repository URL';
+    $('#publish-url-error').classList.remove('hidden');
+    return;
+  }
+
+  const btn = $('#confirm-publish');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await Toast.promise(
+      api('POST', `/repos/${state.selectedRepoId}/publish`, { remote_url: url, remote_name: 'origin' }),
+      { loading: 'Connecting remote & pushing...', success: 'Published to GitHub!', error: (e) => e.message }
+    );
+    closePublishModal();
+    selectRepo(state.selectedRepoId);
+  } catch (err) {
+    $('#publish-url-error').textContent = err.message || 'Failed to publish to GitHub';
+    $('#publish-url-error').classList.remove('hidden');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 };
 
@@ -1316,6 +1382,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('#confirm-add-repo').addEventListener('click', addRepo);
   $('#init-and-track-btn')?.addEventListener('click', handleInitAndTrackRepo);
   $('#repo-path-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addRepo(); });
+
+  // Publish repo
+  $('#close-publish-modal')?.addEventListener('click', closePublishModal);
+  $('#cancel-publish')?.addEventListener('click', closePublishModal);
+  $('#confirm-publish')?.addEventListener('click', handlePublishRepo);
+  $('#publish-remote-url')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') handlePublishRepo(); });
 
   // Settings
   $('#close-settings-modal').addEventListener('click', () => $('#settings-modal').classList.add('hidden'));
