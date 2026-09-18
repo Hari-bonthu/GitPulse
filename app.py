@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from models import (
-    AppConfig, Settings, RepoConfig, AddRepoRequest, CommitRequest,
+    AppConfig, Settings, RepoConfig, AddRepoRequest, InitRepoRequest, CommitRequest,
     StageRequest, GenerateCommitMessageRequest, GenerateCommitMessageResponse,
     DashboardSummary, RepoStatus, RepoSummary, RepoHealth, TreeNode,
     CommitEntry, StashEntry, ChangedFile
@@ -25,7 +25,7 @@ from git_scanner import (
     get_changed_files, build_file_tree, get_branch_info, get_commit_log,
     get_stash_list, get_diff_for_file, stage_files, unstage_files,
     commit_changes, push_changes, apply_stash, pop_stash, drop_stash,
-    check_repo_access
+    check_repo_access, init_repo
 )
 from ai_commit import generate_commit_message
 from notifier import NotificationManager, NotificationScheduler
@@ -167,6 +167,16 @@ async def add_repo(req: AddRepoRequest):
     path = req.path.strip()
     is_valid, err = validate_git_repo(path)
     if not is_valid:
+        # If directory exists on disk, indicate that it can be initialized with Git
+        if os.path.isdir(path):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "can_init": True,
+                    "message": "Directory exists but is not a Git repository yet.",
+                    "path": path
+                }
+            )
         raise HTTPException(status_code=400, detail=f"Invalid git repository: {err}")
 
     config = load_config()
@@ -187,6 +197,29 @@ async def add_repo(req: AddRepoRequest):
 
     summary = get_repo_summary(path, config.settings.staleness_threshold_days)
     return {"message": "Repository added", "repo": summary.model_dump()}
+
+
+@app.post("/api/repos/init")
+async def initialize_repo(req: InitRepoRequest):
+    path = req.path.strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="Path cannot be empty")
+
+    ok, msg = init_repo(path, req.default_branch, req.create_gitignore)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+
+    config = load_config()
+    repo_id = get_repo_id(path)
+
+    # Check for duplicates
+    already_tracked = any(os.path.normpath(r.path) == os.path.normpath(path) for r in config.repos)
+    if not already_tracked:
+        config.repos.append(RepoConfig(id=repo_id, path=path))
+        save_config(config)
+
+    summary = get_repo_summary(path, config.settings.staleness_threshold_days)
+    return {"message": msg, "repo": summary.model_dump()}
 
 
 @app.delete("/api/repos/{repo_id}")

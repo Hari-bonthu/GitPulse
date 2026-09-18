@@ -1333,6 +1333,13 @@ html, body {
   display: none !important;
 }
 
+.custom-select.dropup .custom-select-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+  animation: popoverUp 160ms var(--ease-out) both;
+  transform-origin: bottom center;
+}
+
 .custom-select-option {
   display: flex;
   align-items: center;
@@ -1412,12 +1419,14 @@ html, body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
-  backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(6px);
   z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
   animation: fadeIn 150ms var(--ease-out) both;
 }
 
@@ -1425,24 +1434,25 @@ html, body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  width: 90%;
+  width: 100%;
   max-width: 480px;
-  max-height: 80vh;
-  overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-  animation: modalSlideIn 250ms var(--ease-out) both;
-}
-
-#settings-modal .modal-content {
-  overflow: visible;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* Strict containment: all children and buttons stay inside card */
+  box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+  animation: modalSlideIn 200ms var(--ease-out) both;
+  position: relative;
 }
 
 .modal-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
 }
 
 .modal-title {
@@ -1450,13 +1460,62 @@ html, body {
   font-size: 16px;
 }
 
-.modal-body { padding: 20px; }
+.modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 20px;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* --- Git Init Callout --- */
+.repo-init-callout {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  margin-top: 12px;
+  animation: popoverDown 180ms var(--ease-out) both;
+}
+
+.init-callout-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.init-callout-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.init-callout-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.init-callout-desc code {
+  font-family: monospace;
+  background: var(--bg-card);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
 .modal-footer {
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 16px 20px;
+  padding: 14px 20px;
   border-top: 1px solid var(--border);
+  background: var(--bg-card);
 }
 
 /* --- Form Elements --- */

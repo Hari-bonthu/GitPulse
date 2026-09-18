@@ -163,14 +163,50 @@ function refreshIcons() {
 
 function statusIcon(health) {
   const map = {
-    CLEAN: { icon: 'circle-check', cls: 'clean' },
-    DIRTY: { icon: 'circle-alert', cls: 'dirty' },
-    UNPUSHED: { icon: 'arrow-up-circle', cls: 'unpushed' },
-    BEHIND: { icon: 'arrow-down-circle', cls: 'behind' },
-    STALE: { icon: 'clock', cls: 'stale' },
+    CLEAN: { icon: 'circle-check', cls: 'clean', title: 'Clean: all changes committed' },
+    DIRTY: { icon: 'circle-dot', cls: 'dirty', title: 'Active: uncommitted changes in working tree' },
+    UNPUSHED: { icon: 'arrow-up-circle', cls: 'unpushed', title: 'Unpushed commits ready to publish' },
+    BEHIND: { icon: 'arrow-down-circle', cls: 'behind', title: 'Behind upstream remote' },
+    STALE: { icon: 'clock', cls: 'stale', title: 'Stale: inactive for >30 days' },
   };
   const m = map[health] || map.DIRTY;
-  return `<i data-lucide="${m.icon}" class="status-icon ${m.cls}" style="width:18px;height:18px;"></i>`;
+  return `<i data-lucide="${m.icon}" class="status-icon ${m.cls}" title="${m.title}" style="width:16px;height:16px;"></i>`;
+}
+
+function renderRepoHealthBadge(status) {
+  const changedCount = (status.unstaged_files?.length || 0) + (status.staged_files?.length || 0) + (status.untracked_files?.length || 0);
+  const unpushedCount = status.branch?.ahead || 0;
+
+  if (changedCount > 0) {
+    return `
+      <div class="repo-health-pill dirty" title="${changedCount} uncommitted file${changedCount > 1 ? 's' : ''} in working tree">
+        <span class="health-dot"></span>
+        <span>${changedCount} uncommitted</span>
+      </div>
+    `;
+  }
+  if (unpushedCount > 0) {
+    return `
+      <div class="repo-health-pill unpushed" title="${unpushedCount} unpushed commit${unpushedCount > 1 ? 's' : ''}">
+        <span class="health-dot"></span>
+        <span>${unpushedCount} unpushed</span>
+      </div>
+    `;
+  }
+  if (status.health === 'STALE') {
+    return `
+      <div class="repo-health-pill stale" title="No commits in over 30 days">
+        <span class="health-dot"></span>
+        <span>Stale</span>
+      </div>
+    `;
+  }
+  return `
+    <div class="repo-health-pill clean" title="Working tree clean, synced with remote">
+      <span class="health-dot"></span>
+      <span>Clean</span>
+    </div>
+  `;
 }
 
 function fileStatusIcon(status) {
@@ -340,8 +376,11 @@ async function selectRepo(repoId) {
 function renderRepoDetail(status, tree, log, stash) {
   // Title
   $('#detail-title').innerHTML = `
-    ${statusIcon(status.health)}
-    <span>${esc(status.name)}</span>
+    <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+      <i data-lucide="folder-git-2" class="detail-repo-icon"></i>
+      <span class="detail-repo-name">${esc(status.name)}</span>
+      ${renderRepoHealthBadge(status)}
+    </div>
     <button class="btn btn-danger btn-sm" onclick="confirmRemoveRepo('${esc(status.id)}')" style="margin-left:auto;" title="Stop tracking this repository">
       <i data-lucide="trash-2" style="width:12px;height:12px;"></i>
       Remove
@@ -735,15 +774,21 @@ window.openAddRepoModal = function() {
   $('#add-repo-modal').classList.remove('hidden');
   $('#repo-path-input').value = '';
   $('#repo-path-error').classList.add('hidden');
+  $('#repo-init-box')?.classList.add('hidden');
   $('#repo-path-input').focus();
+  refreshIcons();
 };
 
 function closeAddRepoModal() {
   $('#add-repo-modal').classList.add('hidden');
+  $('#repo-init-box')?.classList.add('hidden');
 }
 
 async function addRepo() {
   const path = $('#repo-path-input').value.trim();
+  $('#repo-path-error').classList.add('hidden');
+  $('#repo-init-box')?.classList.add('hidden');
+
   if (!path) {
     $('#repo-path-error').textContent = 'Please enter a path';
     $('#repo-path-error').classList.remove('hidden');
@@ -751,14 +796,46 @@ async function addRepo() {
   }
 
   try {
-    await Toast.promise(
+    const res = await Toast.promise(
       api('POST', '/repos', { path }),
       { loading: 'Adding repository...', success: 'Repository added!', error: (e) => e.message }
     );
     closeAddRepoModal();
     await refreshAll();
+    if (res.repo && res.repo.id) {
+      selectRepo(res.repo.id);
+    }
+  } catch (err) {
+    const msg = (err.message || '').toLowerCase();
+    if (msg.includes('not a git repository') || msg.includes('can_init')) {
+      $('#repo-init-box')?.classList.remove('hidden');
+      refreshIcons();
+    } else {
+      $('#repo-path-error').textContent = err.message || 'Failed to add repository';
+      $('#repo-path-error').classList.remove('hidden');
+    }
+  }
+}
+
+async function handleInitAndTrackRepo() {
+  const path = $('#repo-path-input').value.trim();
+  if (!path) return;
+  const btn = $('#init-and-track-btn');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await Toast.promise(
+      api('POST', '/repos/init', { path, default_branch: 'main', create_gitignore: true }),
+      { loading: 'Initializing Git repository...', success: 'Git initialized & tracked!', error: (e) => e.message }
+    );
+    closeAddRepoModal();
+    await refreshAll();
+    if (res.repo && res.repo.id) {
+      selectRepo(res.repo.id);
+    }
   } catch {
-    // error shown by toast
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1237,6 +1314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('#close-add-modal').addEventListener('click', closeAddRepoModal);
   $('#cancel-add-repo').addEventListener('click', closeAddRepoModal);
   $('#confirm-add-repo').addEventListener('click', addRepo);
+  $('#init-and-track-btn')?.addEventListener('click', handleInitAndTrackRepo);
   $('#repo-path-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addRepo(); });
 
   // Settings

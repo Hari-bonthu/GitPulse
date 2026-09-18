@@ -8,7 +8,7 @@
   <title>GitPulse — Multi-Repo Git Dashboard</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="/static/site.webmanifest">
-  <link rel="stylesheet" href="/static/styles.css?v=2.2">
+  <link rel="stylesheet" href="/static/styles.css?v=2.5">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -281,8 +281,22 @@
         <div class="form-group">
           <label class="form-label" for="repo-path-input">Repository Path</label>
           <input type="text" class="form-input" id="repo-path-input" placeholder="C:\Users\you\projects\my-repo">
-          <p style="font-size:11px;color:var(--text-muted);margin-top:6px;">Enter the full path to a git repository root folder.</p>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:6px;">Enter the full path to a git repository or project folder.</p>
           <p id="repo-path-error" style="font-size:12px;color:var(--error);margin-top:4px;" class="hidden"></p>
+        </div>
+        <!-- Git Init Callout (revealed if directory exists but is not a Git repo) -->
+        <div id="repo-init-box" class="repo-init-callout hidden">
+          <div class="init-callout-icon">
+            <i data-lucide="folder-git-2" style="width:20px;height:20px;"></i>
+          </div>
+          <div class="init-callout-body" style="flex:1;">
+            <div class="init-callout-title">Folder is not a Git repository yet</div>
+            <div class="init-callout-desc">Would you like GitPulse to initialize Git on branch <code>main</code> and track it?</div>
+            <button class="btn btn-primary btn-sm" type="button" id="init-and-track-btn" style="margin-top:10px;">
+              <i data-lucide="sparkles" style="width:13px;height:13px;"></i>
+              Initialize Git & Track
+            </button>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -368,7 +382,7 @@
         </div>
         <div class="form-group">
           <label class="form-label">Theme</label>
-          <div class="custom-select" id="dropdown-theme">
+          <div class="custom-select dropup" id="dropdown-theme">
             <button class="custom-select-trigger" type="button" id="trigger-theme" aria-haspopup="listbox" aria-expanded="false">
               <span class="custom-select-label" id="label-theme-text">
                 <i data-lucide="monitor" class="option-icon" style="color:var(--accent);"></i>
@@ -432,6 +446,6 @@
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="/static/app.js?v=2.2"></script>
+  <script src="/static/app.js?v=2.5"></script>
 </body>
 </html>

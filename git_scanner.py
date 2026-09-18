@@ -96,8 +96,13 @@ def build_file_tree(changed_files: List[ChangedFile]) -> List[TreeNode]:
 def get_branch_info(repo: Repo) -> BranchInfo:
     try:
         branch_name = repo.active_branch.name
-    except TypeError:
-        return BranchInfo(name="HEAD (detached)")
+    except (TypeError, ValueError):
+        try:
+            branch_name = repo.git.symbolic_ref('--short', 'HEAD')
+        except Exception:
+            branch_name = "main (initial)"
+    except Exception:
+        branch_name = "HEAD (detached)"
     
     info = BranchInfo(name=branch_name)
     try:
@@ -232,10 +237,58 @@ def get_repo_summary(path: str, staleness_days: int = 3) -> RepoSummary:
         last_commit_message=last_msg
     )
 
+def init_repo(path: str, default_branch: str = "main", create_gitignore: bool = True) -> Tuple[bool, str]:
+    try:
+        p = Path(path)
+        if not p.exists():
+            p.mkdir(parents=True, exist_ok=True)
+        
+        if (p / ".git").exists():
+            return False, "Directory is already a Git repository"
+        
+        repo = Repo.init(str(p), initial_branch=default_branch)
+        
+        if create_gitignore and not (p / ".gitignore").exists():
+            default_ignore = (
+                "# Environment & Secrets\n.env\n*.env\nconfig.json\n\n"
+                "# Python\n__pycache__/\n*.py[cod]\nvenv/\n.venv/\n\n"
+                "# Node\nnode_modules/\n\n"
+                "# IDE\n.vscode/\n.idea/\n*.swp\n\n"
+                "# OS\n.DS_Store\nThumbs.db\n"
+            )
+            with open(p / ".gitignore", "w", encoding="utf-8") as f:
+                f.write(default_ignore)
+        
+        repo.close()
+        return True, f"Initialized empty Git repository on branch '{default_branch}'"
+    except Exception as e:
+        return False, str(e)
+
 def stage_files(repo_path: str, files: List[str]) -> bool:
     try:
         repo = Repo(repo_path)
-        repo.git.add(*files)
+        if not files:
+            return True
+
+        ignored = set()
+        try:
+            ignored = set(repo.ignored(*files))
+        except Exception:
+            pass
+
+        to_add = [f for f in files if f not in ignored]
+        if to_add:
+            repo.git.add(*to_add)
+
+        # For any ignored file that was already tracked in the index, update it
+        if ignored:
+            for f in ignored:
+                try:
+                    if f in repo.index.entries:
+                        repo.git.add('-f', f)
+                except Exception:
+                    pass
+
         return True
     except Exception:
         return False
@@ -252,7 +305,24 @@ def commit_changes(repo_path: str, message: str, files: Optional[List[str]] = No
     try:
         repo = Repo(repo_path)
         if files:
-            repo.git.add(*files)
+            ignored = set()
+            try:
+                ignored = set(repo.ignored(*files))
+            except Exception:
+                pass
+
+            to_add = [f for f in files if f not in ignored]
+            if to_add:
+                repo.git.add(*to_add)
+
+            # For any ignored file that was already tracked in index, allow adding with force
+            if ignored:
+                for ig in ignored:
+                    try:
+                        if ig in repo.index.entries:
+                            repo.git.add('-f', ig)
+                    except Exception:
+                        pass
         else:
             try:
                 has_staged = bool(repo.index.diff('HEAD'))
@@ -276,6 +346,11 @@ def commit_changes(repo_path: str, message: str, files: Optional[List[str]] = No
             
         commit = repo.index.commit(message)
         return True, commit.hexsha[:7]
+    except git.GitCommandError as e:
+        err = e.stderr.strip() if e.stderr else str(e)
+        if "The following paths are ignored" in err:
+            err = err.split("hint:")[0].strip()
+        return False, err
     except Exception as e:
         return False, str(e)
 

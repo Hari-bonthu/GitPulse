@@ -86,6 +86,11 @@ class DashboardSummary(BaseModel):
 class AddRepoRequest(BaseModel):
     path: str
 
+class InitRepoRequest(BaseModel):
+    path: str
+    default_branch: str = "main"
+    create_gitignore: bool = True
+
 class CommitRequest(BaseModel):
     message: str
     files: Optional[List[str]] = None
