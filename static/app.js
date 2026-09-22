@@ -16,6 +16,10 @@ const state = {
   refreshTimer: null,
   autoRefreshEnabled: true,
   commitAction: 'commit', // 'commit' or 'commit-push'
+  commitStyle: 'conventional', // 'conventional', 'concise', 'detailed'
+  dashboardFilter: 'all',
+  dashboardSearch: '',
+  dashboardSummaries: [],
   refreshIntervalSeconds: 60,
   stagedFiles: new Set(),
   expandedDirs: new Set(),
@@ -226,15 +230,29 @@ function fileStatusIcon(status) {
 // RENDERING
 // ============================================
 
-// --- Dashboard ---
 function renderDashboard(data) {
   state.dashboard = data;
+  state.dashboardSummaries = data.repo_summaries || [];
 
   // Summary bar
   $('#stat-total').textContent = data.total_repos;
   $('#stat-attention').textContent = data.repos_needing_attention;
   $('#stat-unpushed').textContent = data.repos_with_unpushed;
   $('#stat-stale').textContent = data.stale_repos;
+
+  // Update filter pill counts
+  const repos = state.dashboardSummaries;
+  const countAll = repos.length;
+  const countAttention = repos.filter(r => r.health !== 'CLEAN' || r.changed_count > 0 || r.unpushed_count > 0).length;
+  const countUnpushed = repos.filter(r => r.unpushed_count > 0).length;
+  const countDirty = repos.filter(r => r.changed_count > 0).length;
+  const countClean = repos.filter(r => r.health === 'CLEAN' && r.changed_count === 0 && r.unpushed_count === 0).length;
+
+  if ($('#pill-count-all')) $('#pill-count-all').textContent = countAll;
+  if ($('#pill-count-attention')) $('#pill-count-attention').textContent = countAttention;
+  if ($('#pill-count-unpushed')) $('#pill-count-unpushed').textContent = countUnpushed;
+  if ($('#pill-count-dirty')) $('#pill-count-dirty').textContent = countDirty;
+  if ($('#pill-count-clean')) $('#pill-count-clean').textContent = countClean;
 
   // Update sidebar repo count
   const navCount = $('#sidebar-repo-count');
@@ -252,9 +270,16 @@ function renderDashboard(data) {
   // Sidebar
   renderSidebar(data.repo_summaries);
 
-  // Dashboard grid
+  // Render filtered cards
+  filterAndRenderDashboardCards();
+}
+
+function filterAndRenderDashboardCards() {
   const grid = $('#dashboard-grid');
-  if (data.repo_summaries.length === 0) {
+  if (!grid) return;
+
+  const repos = state.dashboardSummaries || [];
+  if (repos.length === 0) {
     grid.innerHTML = `
       <div class="empty-state" style="grid-column:1/-1;">
         <i data-lucide="git-branch"></i>
@@ -269,8 +294,47 @@ function renderDashboard(data) {
     return;
   }
 
-  grid.innerHTML = data.repo_summaries.map((r, i) => `
-    <div class="dash-card" style="animation-delay:${i * 50}ms" onclick="selectRepo('${esc(r.id)}')">
+  const query = (state.dashboardSearch || '').toLowerCase().trim();
+  const filter = state.dashboardFilter || 'all';
+
+  const filtered = repos.filter(r => {
+    // Search query check
+    if (query) {
+      const matchName = r.name.toLowerCase().includes(query);
+      const matchPath = (r.path || '').toLowerCase().includes(query);
+      const matchBranch = (r.branch_name || '').toLowerCase().includes(query);
+      if (!matchName && !matchPath && !matchBranch) return false;
+    }
+
+    // Filter check
+    if (filter === 'attention') {
+      return r.health !== 'CLEAN' || r.changed_count > 0 || r.unpushed_count > 0;
+    } else if (filter === 'unpushed') {
+      return r.unpushed_count > 0;
+    } else if (filter === 'dirty') {
+      return r.changed_count > 0;
+    } else if (filter === 'clean') {
+      return r.health === 'CLEAN' && r.changed_count === 0 && r.unpushed_count === 0;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1;">
+        <i data-lucide="filter-x"></i>
+        <div class="empty-state-title">No matching repositories</div>
+        <div class="empty-state-desc">No repositories match your search or filter selection.</div>
+        <button class="btn btn-secondary mt-4" onclick="clearDashboardFilters()">
+          Clear Filters
+        </button>
+      </div>`;
+    refreshIcons();
+    return;
+  }
+
+  grid.innerHTML = filtered.map((r, i) => `
+    <div class="dash-card" style="animation-delay:${i * 40}ms" onclick="selectRepo('${esc(r.id)}')">
       <div class="dash-card-header">
         <div class="dash-card-title">
           ${statusIcon(r.health)}
@@ -293,7 +357,7 @@ function renderDashboard(data) {
           <i data-lucide="arrow-up-circle" style="color:var(--error);"></i>
           <span>${r.unpushed_count} unpushed commit${r.unpushed_count > 1 ? 's' : ''}</span>
         </div>` : ''}
-        ${r.health === 'CLEAN' ? `<div class="dash-card-stat">
+        ${r.health === 'CLEAN' && r.changed_count === 0 && r.unpushed_count === 0 ? `<div class="dash-card-stat">
           <i data-lucide="circle-check" style="color:var(--success);"></i>
           <span style="color:var(--success);">Clean</span>
         </div>` : ''}
@@ -307,6 +371,17 @@ function renderDashboard(data) {
 
   refreshIcons();
 }
+
+window.clearDashboardFilters = function() {
+  state.dashboardSearch = '';
+  state.dashboardFilter = 'all';
+  const input = $('#dashboard-search-input');
+  if (input) input.value = '';
+  document.querySelectorAll('.filter-pill').forEach(p => {
+    p.classList.toggle('active', p.dataset.filter === 'all');
+  });
+  filterAndRenderDashboardCards();
+};
 
 // --- Sidebar ---
 function renderSidebar(repos) {
@@ -421,6 +496,12 @@ function renderRepoDetail(status, tree, log, stash) {
           <button class="btn-sync pull-btn" onclick="handlePull()" title="Pull ${status.branch.behind} commit${status.branch.behind > 1 ? 's' : ''} from upstream">
             <i data-lucide="arrow-down-to-line" style="width:12px;height:12px;"></i>
             <span>Pull</span>
+          </button>
+        ` : ''}
+        ${status.branch.ahead > 0 ? `
+          <button class="btn-sync" onclick="handleGeneratePR()" title="Generate GitHub PR description from unpushed commits" style="color:var(--accent);border-color:rgba(59,130,246,0.3);">
+            <i data-lucide="git-pull-request" style="width:12px;height:12px;"></i>
+            <span>Generate PR</span>
           </button>
         ` : ''}
       </div>
@@ -1335,6 +1416,7 @@ window.handleGenerateAI = async function() {
       api('POST', '/ai/generate-commit', {
         repo_id: state.selectedRepoId,
         files: stagedFiles.length > 0 ? stagedFiles : null,
+        style: state.commitStyle || 'conventional',
       }),
       {
         loading: 'Analyzing changes & generating message...',
@@ -1348,6 +1430,359 @@ window.handleGenerateAI = async function() {
     btn.disabled = false;
   }
 };
+
+// --- Code Review & Safety Scan ---
+window.handleReviewChanges = async function() {
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+  const stagedFiles = Array.from(state.stagedFiles);
+
+  try {
+    const res = await Toast.promise(
+      api('POST', '/ai/review-changes', {
+        repo_id: id,
+        files: stagedFiles.length > 0 ? stagedFiles : null,
+      }),
+      {
+        loading: 'Scanning diff for secrets and code review...',
+        success: 'Review complete',
+        error: (e) => e.message || 'Review failed'
+      }
+    );
+
+    const body = $('#review-modal-body');
+    const riskCls = (res.risk_level || 'LOW').toLowerCase();
+
+    let leaksHTML = '';
+    if (res.leaks && res.leaks.length > 0) {
+      leaksHTML = `
+        <div style="margin-bottom:14px;">
+          <div style="font-weight:600;font-size:12px;color:var(--error);margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+            <i data-lucide="alert-triangle" style="width:14px;height:14px;"></i>
+            Potential Secret Leaks (${res.leaks.length})
+          </div>
+          ${res.leaks.map(l => `
+            <div class="leak-warning-card">
+              <div class="leak-warning-header">
+                <span>${esc(l.rule)}</span>
+                <span style="font-size:10px;text-transform:uppercase;">${esc(l.file)}</span>
+              </div>
+              <div class="leak-code-snippet">${esc(l.line_snippet)}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    let debugHTML = '';
+    if (res.debug_artifacts && res.debug_artifacts.length > 0) {
+      debugHTML = `
+        <div style="margin-bottom:14px;">
+          <div style="font-weight:600;font-size:12px;color:var(--warning);margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+            <i data-lucide="bug" style="width:14px;height:14px;"></i>
+            Debug Statements (${res.debug_artifacts.length})
+          </div>
+          ${res.debug_artifacts.map(d => `
+            <div class="debug-card">${esc(d)}</div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    let cleanNotice = '';
+    if ((!res.leaks || res.leaks.length === 0) && (!res.debug_artifacts || res.debug_artifacts.length === 0)) {
+      cleanNotice = `
+        <div style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.25);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--success);display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+          <i data-lucide="check-circle-2" style="width:16px;height:16px;"></i>
+          Zero secret leaks or leftover debug statements found in inspected changes.
+        </div>
+      `;
+    }
+
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-size:12px;color:var(--text-muted);">Security & Quality Evaluation:</span>
+        <span class="risk-badge ${riskCls}">Risk: ${esc(res.risk_level)}</span>
+      </div>
+      <div class="review-summary-box">
+        ${esc(res.summary)}
+      </div>
+      ${cleanNotice}
+      ${leaksHTML}
+      ${debugHTML}
+    `;
+
+    refreshIcons();
+    $('#code-review-modal')?.classList.remove('hidden');
+  } catch {}
+};
+
+// --- GitHub PR Generator ---
+window.handleGeneratePR = async function() {
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+
+  try {
+    const res = await Toast.promise(
+      api('POST', '/ai/generate-pr', { repo_id: id }),
+      {
+        loading: 'Synthesizing GitHub PR description...',
+        success: 'PR description ready',
+        error: (e) => e.message || 'Failed to generate PR description'
+      }
+    );
+
+    $('#pr-title-input').value = res.title || '';
+    $('#pr-body-input').value = res.body || '';
+    $('#pr-description-modal')?.classList.remove('hidden');
+    refreshIcons();
+  } catch {}
+};
+
+// --- Fetch All Repositories ---
+window.handleFetchAll = async function() {
+  const btn = $('#fetch-all-btn');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await Toast.promise(
+      api('POST', '/repos/fetch-all'),
+      {
+        loading: 'Fetching all remotes...',
+        success: (r) => `Fetched ${r.success_count} of ${r.total} repositories`,
+        error: (e) => e.message || 'Fetch all failed'
+      }
+    );
+    if (state.selectedRepoId) {
+      selectRepo(state.selectedRepoId);
+    } else {
+      loadDashboard();
+    }
+  } catch {} finally {
+    if (btn) btn.disabled = false;
+  }
+};
+
+// --- Command Palette ---
+let commandPaletteSelectedIndex = 0;
+let commandPaletteFilteredItems = [];
+
+window.openCommandPalette = function() {
+  const modal = document.getElementById('command-palette-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const input = document.getElementById('command-palette-input');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  renderCommandPaletteItems('');
+};
+
+window.closeCommandPalette = function() {
+  const modal = document.getElementById('command-palette-modal');
+  if (modal) modal.classList.add('hidden');
+};
+
+function getAvailableCommands() {
+  const commands = [];
+
+  // Repositories
+  if (state.dashboard?.repo_summaries) {
+    state.dashboard.repo_summaries.forEach(r => {
+      commands.push({
+        group: 'Repositories',
+        title: r.name,
+        subtitle: `${r.branch_name} • ${r.path}`,
+        icon: 'folder-git-2',
+        action: () => selectRepo(r.id)
+      });
+    });
+  }
+
+  // Repo-specific actions if a repo is currently selected
+  if (state.selectedRepoId && state.repoDetail) {
+    commands.push({
+      group: 'Repository Actions',
+      title: 'Review Working Changes',
+      subtitle: 'Scan diff for secrets, debug prints & risk evaluation',
+      icon: 'shield-alert',
+      action: () => handleReviewChanges()
+    });
+    commands.push({
+      group: 'Repository Actions',
+      title: 'Generate AI Commit Message',
+      subtitle: `Generate message via ${state.settings?.ai_provider || 'AI'}`,
+      icon: 'sparkles',
+      action: () => handleGenerateAI()
+    });
+    commands.push({
+      group: 'Repository Actions',
+      title: 'Switch / Create Branch',
+      subtitle: 'Open branch switcher popover',
+      icon: 'git-branch',
+      action: () => toggleBranchPicker()
+    });
+    commands.push({
+      group: 'Repository Actions',
+      title: 'Fetch Remote',
+      subtitle: 'Fetch latest references from origin',
+      icon: 'refresh-cw',
+      action: () => handleFetch()
+    });
+    if (state.repoDetail.branch?.behind > 0) {
+      commands.push({
+        group: 'Repository Actions',
+        title: 'Pull Changes',
+        subtitle: `Pull ${state.repoDetail.branch.behind} commit(s) from upstream`,
+        icon: 'arrow-down-to-line',
+        action: () => handlePull()
+      });
+    }
+    if (state.repoDetail.branch?.ahead > 0) {
+      commands.push({
+        group: 'Repository Actions',
+        title: 'Generate GitHub PR Description',
+        subtitle: 'Format PR title and Markdown description from unpushed commits',
+        icon: 'git-pull-request',
+        action: () => handleGeneratePR()
+      });
+    }
+    commands.push({
+      group: 'Repository Actions',
+      title: 'Stash Working Changes',
+      subtitle: 'Save work-in-progress to stash',
+      icon: 'archive',
+      action: () => toggleStashCreateForm()
+    });
+    commands.push({
+      group: 'Repository Actions',
+      title: 'Discard All Changes',
+      subtitle: 'Revert tracked and clean untracked files',
+      icon: 'undo-2',
+      action: () => handleDiscardAll()
+    });
+  }
+
+  // Global Navigation & Actions
+  commands.push({
+    group: 'Navigation',
+    title: 'Go to Dashboard',
+    subtitle: 'View summary grid of all repositories',
+    icon: 'layout-grid',
+    action: () => backToDashboard()
+  });
+  commands.push({
+    group: 'Quick Actions',
+    title: 'Fetch All Repositories',
+    subtitle: 'Fetch latest changes across all tracked projects',
+    icon: 'refresh-cw',
+    action: () => handleFetchAll()
+  });
+  commands.push({
+    group: 'Quick Actions',
+    title: 'Add Existing Repository',
+    subtitle: 'Track a new local repository path',
+    icon: 'folder-plus',
+    action: () => openAddRepoModal()
+  });
+  commands.push({
+    group: 'Quick Actions',
+    title: 'Initialize New Repository',
+    subtitle: 'Run git init with standard .gitignore',
+    icon: 'plus-circle',
+    action: () => openInitRepoModal()
+  });
+  commands.push({
+    group: 'Preferences',
+    title: 'Toggle Color Theme',
+    subtitle: 'Switch between Dark and Light themes',
+    icon: 'sun-moon',
+    action: () => {
+      const html = document.documentElement;
+      const isDark = html.classList.contains('theme-dark');
+      setTheme(isDark ? 'light' : 'dark');
+      Toast.info(`Switched to ${isDark ? 'Light' : 'Dark'} theme`);
+    }
+  });
+  commands.push({
+    group: 'Preferences',
+    title: 'Open Settings',
+    subtitle: 'Configure AI providers, refresh rates, quiet hours',
+    icon: 'settings',
+    action: () => openSettingsModal()
+  });
+
+  return commands;
+}
+
+function renderCommandPaletteItems(filterText) {
+  const query = (filterText || '').toLowerCase().trim();
+  const all = getAvailableCommands();
+
+  commandPaletteFilteredItems = query ? all.filter(c =>
+    c.title.toLowerCase().includes(query) ||
+    (c.subtitle && c.subtitle.toLowerCase().includes(query)) ||
+    c.group.toLowerCase().includes(query)
+  ) : all;
+
+  commandPaletteSelectedIndex = 0;
+  const list = document.getElementById('command-palette-list');
+  if (!list) return;
+
+  if (commandPaletteFilteredItems.length === 0) {
+    list.innerHTML = `
+      <div style="padding:24px 16px;text-align:center;color:var(--text-muted);font-size:13px;">
+        No commands or repositories matching "${esc(query)}"
+      </div>
+    `;
+    return;
+  }
+
+  // Group items
+  const groups = {};
+  commandPaletteFilteredItems.forEach((item, idx) => {
+    if (!groups[item.group]) groups[item.group] = [];
+    groups[item.group].push({ item, idx });
+  });
+
+  let html = '';
+  for (const [grpName, items] of Object.entries(groups)) {
+    html += `<div class="command-group-title">${esc(grpName)}</div>`;
+    items.forEach(({ item, idx }) => {
+      const isSelected = idx === commandPaletteSelectedIndex;
+      html += `
+        <div class="command-item ${isSelected ? 'selected' : ''}" data-idx="${idx}">
+          <i data-lucide="${item.icon}" class="command-item-icon"></i>
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <span style="font-weight:500;">${esc(item.title)}</span>
+            ${item.subtitle ? `<span style="font-size:11px;color:var(--text-muted);">${esc(item.subtitle)}</span>` : ''}
+          </div>
+          <span class="command-item-hint">${esc(item.group)}</span>
+        </div>
+      `;
+    });
+  }
+
+  list.innerHTML = html;
+  refreshIcons();
+
+  // Click handlers
+  list.querySelectorAll('.command-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      executeCommand(idx);
+    });
+  });
+}
+
+function executeCommand(idx) {
+  const cmd = commandPaletteFilteredItems[idx];
+  if (cmd && cmd.action) {
+    closeCommandPalette();
+    cmd.action();
+  }
+}
 
 // --- Settings ---
 function updateAIKeyVisibility(provider) {
@@ -1801,6 +2236,99 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // Global Keyboard Shortcuts (Command Palette, Esc)
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      const modal = document.getElementById('command-palette-modal');
+      if (modal && !modal.classList.contains('hidden')) {
+        closeCommandPalette();
+      } else {
+        openCommandPalette();
+      }
+    } else if (e.key === 'Escape') {
+      closeCommandPalette();
+      $('#code-review-modal')?.classList.add('hidden');
+      $('#pr-description-modal')?.classList.add('hidden');
+    }
+  });
+
+  // Command Palette input & navigation
+  const cmdInput = document.getElementById('command-palette-input');
+  if (cmdInput) {
+    cmdInput.addEventListener('input', () => {
+      renderCommandPaletteItems(cmdInput.value);
+    });
+    cmdInput.addEventListener('keydown', (e) => {
+      const items = document.querySelectorAll('.command-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (items.length > 0) {
+          commandPaletteSelectedIndex = (commandPaletteSelectedIndex + 1) % items.length;
+          items.forEach((item, idx) => item.classList.toggle('selected', idx === commandPaletteSelectedIndex));
+          items[commandPaletteSelectedIndex]?.scrollIntoView({ block: 'nearest' });
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (items.length > 0) {
+          commandPaletteSelectedIndex = (commandPaletteSelectedIndex - 1 + items.length) % items.length;
+          items.forEach((item, idx) => item.classList.toggle('selected', idx === commandPaletteSelectedIndex));
+          items[commandPaletteSelectedIndex]?.scrollIntoView({ block: 'nearest' });
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executeCommand(commandPaletteSelectedIndex);
+      }
+    });
+  }
+
+  // Dashboard live search input
+  const dashSearch = document.getElementById('dashboard-search-input');
+  if (dashSearch) {
+    dashSearch.addEventListener('input', () => {
+      state.dashboardSearch = dashSearch.value;
+      filterAndRenderDashboardCards();
+    });
+  }
+
+  // Dashboard filter pills
+  document.querySelectorAll('.filter-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.dashboardFilter = btn.dataset.filter || 'all';
+      filterAndRenderDashboardCards();
+    });
+  });
+
+  // Commit style selector pills
+  document.querySelectorAll('.style-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.style-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.commitStyle = btn.dataset.style || 'conventional';
+    });
+  });
+
+  // Review Modal close
+  $('#close-review-modal')?.addEventListener('click', () => $('#code-review-modal')?.classList.add('hidden'));
+  $('#cancel-review-modal')?.addEventListener('click', () => $('#code-review-modal')?.classList.add('hidden'));
+
+  // PR Modal close and copy
+  $('#close-pr-modal')?.addEventListener('click', () => $('#pr-description-modal')?.classList.add('hidden'));
+  $('#cancel-pr-modal')?.addEventListener('click', () => $('#pr-description-modal')?.classList.add('hidden'));
+  $('#copy-pr-btn')?.addEventListener('click', () => {
+    const title = $('#pr-title-input')?.value || '';
+    const body = $('#pr-body-input')?.value || '';
+    const textToCopy = `${title}\n\n${body}`;
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      Toast.success('Copied PR title and description to clipboard!');
+      $('#pr-description-modal')?.classList.add('hidden');
+    }).catch(() => {
+      Toast.error('Failed to copy to clipboard');
+    });
+  });
+
   // Start auto refresh
   startAutoRefresh();
 
@@ -1824,3 +2352,8 @@ window.handleCommit = handleCommit;
 window.handleGenerateAI = handleGenerateAI;
 window.handleStash = handleStash;
 window.confirmRemoveRepo = confirmRemoveRepo;
+window.openCommandPalette = openCommandPalette;
+window.closeCommandPalette = closeCommandPalette;
+window.handleReviewChanges = handleReviewChanges;
+window.handleGeneratePR = handleGeneratePR;
+window.handleFetchAll = handleFetchAll;

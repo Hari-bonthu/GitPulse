@@ -122,10 +122,48 @@ class StageRequest(BaseModel):
 class GenerateCommitMessageRequest(BaseModel):
     repo_id: str
     files: Optional[List[str]] = None
+    style: Optional[str] = "conventional"  # "conventional", "concise", "detailed"
 
 class GenerateCommitMessageResponse(BaseModel):
     message: str
     provider: str
+
+class SecretLeak(BaseModel):
+    file: str
+    line_snippet: str
+    rule: str
+    risk: str
+
+class ReviewChangesRequest(BaseModel):
+    repo_id: str
+    files: Optional[List[str]] = None
+
+class ReviewChangesResponse(BaseModel):
+    summary: str
+    risk_level: str  # "LOW", "MEDIUM", "HIGH"
+    findings: List[str]
+    leaks: List[SecretLeak]
+    debug_artifacts: List[str]
+
+class GeneratePRRequest(BaseModel):
+    repo_id: str
+
+class GeneratePRResponse(BaseModel):
+    title: str
+    body: str
+    unpushed_count: int
+    commits: List[CommitEntry]
+
+class BatchFetchResult(BaseModel):
+    id: str
+    name: str
+    ok: bool
+    message: str
+
+class BatchFetchResponse(BaseModel):
+    total: int
+    success_count: int
+    results: List[BatchFetchResult]
 
 class Settings(BaseModel):
     staleness_threshold_days: int = 3

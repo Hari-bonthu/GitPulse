@@ -41,15 +41,16 @@ When actively developing across multiple client projects, microservices, or inte
 ## Key Features
 
 - **Multi-Repository Health Radar:** Automatically classifies repository health states (`CLEAN`, `DIRTY`, `UNPUSHED`, `BEHIND`, `STALE`) based on uncommitted changes, untracked files, and upstream commit differentials.
-- **IDE-Style Collapsible File Tree:** Hierarchical tree breakdown of modified, added, deleted, renamed, and untracked files with granular staging checkboxes.
-- **Interactive Unified Diff Viewer:** Inspect file additions and deletions line-by-line with syntax gutters and added/removed line metrics before committing.
-- **Context-Aware AI Commit Generator:** Analyzes staged diffs and untracked file signatures to produce structured conventional commit messages (`feat:`, `fix:`, `refactor:`) via Google Gemini or OpenAI.
-- **Heuristic Offline Fallback:** If API credentials are unavailable or the network is offline, a built-in static analyzer generates compliant conventional commits directly from diff headers.
-- **Atomic Commit & Push Operations:** Execute local commits independently or trigger unified commit-and-push transactions directly from the interface.
-- **Full Stash Lifecycle Management:** Review stash indices, messages, creation dates, and branch origins with one-click `apply`, `pop`, and `drop` actions.
+- **Interactive Branch Switcher & Remote Sync:** 1-click branch switching, local/remote branch discovery, and on-demand `fetch` and `pull` operations directly in the repository header.
+- **Granular Discard & Stash Controls:** Undo per-file changes or discard all working tree modifications with safety confirmations, plus inline stash creation with optional messages.
+- **Pre-Commit Secret Scanner & Code Review:** Automatically inspects working diffs for leaked API keys, tokens, and stray debug statements (`console.log`, `print`) before committing.
+- **GitHub Pull Request Generator:** Synthesizes well-structured PR titles and Markdown descriptions (Overview, Key Changes, Verification Checklist) from unpushed branch commits.
+- **Power Command Palette (`Ctrl+K`):** Instant fuzzy search across repositories with quick actions to switch branches, fetch remotes, review diffs, or jump directly into detail views.
+- **Multi-Style AI Commit Generator:** Produces structured commit messages with selectable formats (`Conventional`, `Concise`, `Detailed`) using Gemini 2.0 Flash or OpenAI with offline fallback.
+- **Batch Remote Sync:** Parallel remote fetch across all tracked repositories simultaneously.
 - **Desktop Watchdog Alerts:** Background notification scheduler powered by `plyer` delivers native desktop toasts when repositories require attention, respecting configurable quiet hours.
 - **Tailored Micro-Interactions:** Implemented following Emil Kowalski motion principles (`cubic-bezier(0.23, 1, 0.32, 1)`) with physical button-press scaling and stacked Sonner-style toast notifications.
-- **Strict Visual Discipline:** 100% vector SVG iconography via Lucide Icons with zero low-fidelity emojis.
+- **Strict Visual Discipline & PWA Suite:** 100% vector SVG iconography via Lucide Icons, multi-resolution square favicon suite, and root technical SEO crawlability.
 
 ---
 
@@ -244,6 +245,7 @@ curl -X POST http://127.0.0.1:8765/api/repos \
 | `POST` | `/api/repos/{repo_id}/commit` | `200 / 400` | Commit staged changes with provided message. |
 | `POST` | `/api/repos/{repo_id}/push` | `200 / 400` | Push committed changes to the tracking upstream branch. |
 | `POST` | `/api/repos/{repo_id}/commit-push` | `200 / 400` | Atomic single-action commit and push. |
+| `POST` | `/api/repos/{repo_id}/discard` | `200 / 400` | Discard changes for specified files or all working tree modifications. |
 
 #### Stage & Commit Payload
 ```json
@@ -258,35 +260,54 @@ curl -X POST http://127.0.0.1:8765/api/repos \
 
 ---
 
+### Branch Management & Remote Sync
+
+| Method | Endpoint | Status | Description |
+|---|---|---|---|
+| `GET` | `/api/repos/{repo_id}/branches` | `200` | List local and remote branches with tracking status. |
+| `POST` | `/api/repos/{repo_id}/branches/checkout` | `200 / 400` | Switch to an existing branch or create a new branch. |
+| `POST` | `/api/repos/{repo_id}/fetch` | `200 / 400` | Fetch remote references for the repository. |
+| `POST` | `/api/repos/{repo_id}/pull` | `200 / 400` | Fast-forward or pull incoming changes from upstream. |
+| `POST` | `/api/repos/fetch-all` | `200` | Parallel remote fetch across all monitored repositories. |
+
+---
+
 ### Stash Operations
 
 | Method | Endpoint | Status | Description |
 |---|---|---|---|
 | `GET` | `/api/repos/{repo_id}/stash` | `200` | List all stashes with index, message, branch, and timestamp. |
+| `POST` | `/api/repos/{repo_id}/stash` | `200 / 400` | Create a new stash entry with optional message and untracked files. |
 | `POST` | `/api/repos/{repo_id}/stash/apply?index={i}` | `200 / 400` | Apply stash entry `i` without removing it from the stack. |
 | `POST` | `/api/repos/{repo_id}/stash/pop?index={i}` | `200 / 400` | Apply and remove stash entry `i`. |
 | `DELETE` | `/api/repos/{repo_id}/stash/{i}` | `200 / 400` | Drop stash entry `i`. |
 
 ---
 
-### AI Commit Generation
+### AI Intelligence & Code Review Suite
 
 | Method | Endpoint | Status | Description |
 |---|---|---|---|
-| `POST` | `/api/ai/generate-commit` | `200` | Analyze current diff and generate a semantic commit message. |
+| `POST` | `/api/ai/generate-commit` | `200` | Analyze diff and generate a commit message (`conventional`, `concise`, or `detailed`). |
+| `POST` | `/api/ai/review-changes` | `200` | Scan diff for secret leaks (API keys, tokens), debug artifacts, and summary. |
+| `POST` | `/api/ai/generate-pr` | `200` | Synthesize GitHub Pull Request title and Markdown body from commits/diff. |
 
-#### Request Payload
+#### AI Commit Request Payload
 ```json
 {
-  "repo_id": "project_core"
+  "repo_id": "project_core",
+  "style": "conventional"
 }
 ```
 
-#### Response Structure
+#### Code Review Response Structure
 ```json
 {
-  "message": "fix(notifier): sanitize notification channel identifier\n\nEnsure background notification payload matches Windows toast schema constraints.",
-  "provider": "gemini"
+  "has_leaks": false,
+  "leaks": [],
+  "debug_statements": [],
+  "review_summary": "All changes conform to clean architecture standards. No sensitive keys detected.",
+  "risk_level": "LOW"
 }
 ```
 
@@ -296,9 +317,11 @@ curl -X POST http://127.0.0.1:8765/api/repos \
 
 | Shortcut | Scope | Action |
 |---|---|---|
+| `Ctrl + K` / `Cmd + K` | Global | Open the Command Palette to search repositories and run actions |
 | `r` | Global | Trigger manual refresh across all monitored repositories |
+| `f` | Global | Trigger parallel fetch across all monitored repositories |
 | `n` | Global | Toggle the notification history drawer |
-| `Escape` | Modals / Views | Close active modal or return to the overview grid |
+| `Escape` | Modals / Views | Close active modal, popover, or return to the overview grid |
 
 ---
 

@@ -12,14 +12,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 from models import (
     AppConfig, Settings, RepoConfig, AddRepoRequest, InitRepoRequest, PublishRepoRequest, CommitRequest,
     StageRequest, GenerateCommitMessageRequest, GenerateCommitMessageResponse,
     DashboardSummary, RepoStatus, RepoSummary, RepoHealth, TreeNode,
     CommitEntry, StashEntry, ChangedFile, BranchItem, CheckoutBranchRequest,
-    CreateStashRequest, DiscardRequest
+    CreateStashRequest, DiscardRequest, SecretLeak, ReviewChangesRequest,
+    ReviewChangesResponse, GeneratePRRequest, GeneratePRResponse,
+    BatchFetchResult, BatchFetchResponse
 )
 from git_scanner import (
     validate_git_repo, get_repo_id, get_repo_status, get_repo_summary,
@@ -30,7 +32,7 @@ from git_scanner import (
     list_branches, checkout_branch, fetch_remote, pull_changes,
     discard_file_changes, discard_all_changes, create_stash
 )
-from ai_commit import generate_commit_message
+from ai_commit import generate_commit_message, analyze_diff_for_leaks_and_review, generate_pr_description
 from notifier import NotificationManager, NotificationScheduler
 from git import Repo
 
@@ -119,6 +121,32 @@ async def root():
     if index_path.exists():
         return FileResponse(str(index_path))
     return {"message": "GitPulse API is running. Visit /docs for API documentation."}
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt():
+    return "User-agent: *\nAllow: /\nSitemap: http://localhost:8765/sitemap.xml\n"
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>http://localhost:8765/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>"""
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.get("/favicon.ico")
+async def root_favicon():
+    ico_path = static_dir / "favicon.ico"
+    if ico_path.exists():
+        return FileResponse(str(ico_path))
+    return FileResponse(str(static_dir / "favicon.svg"))
 
 
 # --- Dashboard ---
@@ -537,13 +565,127 @@ async def ai_generate_commit(req: GenerateCommitMessageRequest):
             diff_text=diff_text,
             provider=provider,
             api_key=api_key,
-            changed_files=all_changed_files
+            changed_files=all_changed_files,
+            style=req.style or "conventional"
         )
         return GenerateCommitMessageResponse(message=message, provider=used_provider)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ai/review-changes", response_model=ReviewChangesResponse)
+async def ai_review_changes(req: ReviewChangesRequest):
+    path = _find_repo_path(req.repo_id)
+    try:
+        repo = Repo(path)
+        changed_entries = get_changed_files(repo)
+        all_changed_files = [f.path for f in changed_entries]
+        target_files = req.files if req.files else all_changed_files
+
+        diff_parts = []
+        try:
+            diff_cached = repo.git.diff('--cached', *(target_files or []))
+            if diff_cached:
+                diff_parts.append(diff_cached)
+        except Exception:
+            pass
+        try:
+            diff_working = repo.git.diff(*(target_files or []))
+            if diff_working:
+                diff_parts.append(diff_working)
+        except Exception:
+            pass
+
+        untracked = [f for f in repo.untracked_files if not target_files or f in target_files]
+        if untracked:
+            diff_parts.append("New untracked files:\n" + "\n".join(f"  + {f}" for f in untracked))
+
+        diff_text = "\n\n".join(diff_parts)
+
+        config = load_config()
+        provider = config.settings.ai_provider or "gemini"
+        api_key = config.settings.gemini_api_key if provider == "gemini" else config.settings.openai_api_key
+
+        summary, risk, findings, leaks, debugs = analyze_diff_for_leaks_and_review(
+            diff_text=diff_text,
+            changed_files=target_files,
+            api_key=api_key,
+            provider=provider
+        )
+        return ReviewChangesResponse(
+            summary=summary,
+            risk_level=risk,
+            findings=findings,
+            leaks=[SecretLeak(**l) for l in leaks],
+            debug_artifacts=debugs
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ai/generate-pr", response_model=GeneratePRResponse)
+async def ai_generate_pr(req: GeneratePRRequest):
+    path = _find_repo_path(req.repo_id)
+    try:
+        repo = Repo(path)
+        branch = get_branch_info(repo)
+        commits = []
+        if branch.remote_name:
+            try:
+                raw_commits = list(repo.iter_commits(f"{branch.remote_name}..{branch.name}"))
+                commits = [
+                    CommitEntry(
+                        hash=c.hexsha[:7],
+                        full_hash=c.hexsha,
+                        message=c.message.strip(),
+                        author=str(c.author),
+                        timestamp=datetime.fromtimestamp(c.committed_date, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+                    ) for c in raw_commits
+                ]
+            except Exception:
+                commits = get_commit_log(repo, count=5)
+        else:
+            commits = get_commit_log(repo, count=5)
+
+        config = load_config()
+        provider = config.settings.ai_provider or "gemini"
+        api_key = config.settings.gemini_api_key if provider == "gemini" else config.settings.openai_api_key
+
+        title, body = generate_pr_description(
+            commits=[c.model_dump() for c in commits],
+            branch_name=branch.name,
+            api_key=api_key,
+            provider=provider
+        )
+        return GeneratePRResponse(
+            title=title,
+            body=body,
+            unpushed_count=len(commits),
+            commits=commits
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Batch Operations ---
+@app.post("/api/repos/fetch-all", response_model=BatchFetchResponse)
+async def repos_fetch_all():
+    config = load_config()
+    results = []
+    success_count = 0
+    for r in config.repos:
+        name = Path(r.path).name
+        ok, msg = fetch_remote(r.path)
+        if ok:
+            success_count += 1
+        results.append(BatchFetchResult(id=r.id, name=name, ok=ok, message=msg))
+    return BatchFetchResponse(total=len(config.repos), success_count=success_count, results=results)
 
 
 # --- Settings ---

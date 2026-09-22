@@ -6,9 +6,29 @@
   <meta name="description" content="GitPulse is a local web dashboard to monitor git statuses, commit history, diffs, stashes, and branch health across all your repositories.">
   <meta name="theme-color" content="#0a0a0b">
   <title>GitPulse — Multi-Repo Git Dashboard</title>
+
+  <!-- Complete Multi-Resolution Favicon Suite -->
+  <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48x48.png">
+  <link rel="icon" type="image/png" sizes="96x96" href="/static/favicon-96x96.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="manifest" href="/static/site.webmanifest">
-  <link rel="stylesheet" href="/static/styles.css?v=3.1">
+
+  <!-- Core OpenGraph & Social Protocols -->
+  <meta property="og:title" content="GitPulse — Multi-Repo Git Dashboard">
+  <meta property="og:description" content="Local web dashboard to monitor git statuses, commit history, diffs, stashes, and branch health across all your repositories.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="http://localhost:8765/">
+  <meta property="og:image" content="/static/favicon-512x512.png">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="GitPulse — Multi-Repo Git Dashboard">
+  <meta name="twitter:description" content="Local web dashboard to monitor git statuses, commit history, diffs, stashes, and branch health across all your repositories.">
+  <meta name="twitter:image" content="/static/favicon-512x512.png">
+
+  <link rel="stylesheet" href="/static/styles.css?v=4.0">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -20,10 +40,22 @@
         <span>GitPulse</span>
       </div>
       <div class="header-actions">
+        <!-- Command Palette Trigger -->
+        <button class="btn btn-ghost btn-sm" id="header-search-btn" onclick="openCommandPalette()" title="Open Command Palette (Ctrl+K)">
+          <i data-lucide="search" style="width:13px;height:13px;"></i>
+          <span class="kbd-badge">Ctrl K</span>
+        </button>
+
         <!-- Dashboard Button -->
         <button class="btn btn-ghost btn-sm" id="header-dashboard-btn" onclick="backToDashboard()" title="View All Repositories">
           <i data-lucide="layout-grid" style="width:14px;height:14px;"></i>
           <span>Dashboard</span>
+        </button>
+
+        <!-- Fetch All Button -->
+        <button class="btn btn-ghost btn-sm" id="fetch-all-btn" onclick="handleFetchAll()" title="Fetch all tracked repositories from remote">
+          <i data-lucide="refresh-cw" style="width:13px;height:13px;"></i>
+          <span>Fetch All</span>
         </button>
 
         <!-- Auto-refresh custom dropdown -->
@@ -126,6 +158,19 @@
       <main class="main-content" id="main-content">
         <!-- Dashboard View (default) -->
         <div id="dashboard-view">
+          <div class="dashboard-filter-bar" id="dashboard-filter-bar">
+            <div class="search-input-wrapper">
+              <i data-lucide="search" class="search-icon" style="width:14px;height:14px;"></i>
+              <input type="text" id="dashboard-search-input" placeholder="Search repositories by name or path..." autocomplete="off">
+            </div>
+            <div class="filter-pills" id="dashboard-filter-pills">
+              <button class="filter-pill active" data-filter="all" type="button">All <span class="pill-count" id="pill-count-all">0</span></button>
+              <button class="filter-pill" data-filter="attention" type="button">Needs Attention <span class="pill-count" id="pill-count-attention">0</span></button>
+              <button class="filter-pill" data-filter="unpushed" type="button">Unpushed <span class="pill-count" id="pill-count-unpushed">0</span></button>
+              <button class="filter-pill" data-filter="dirty" type="button">Dirty <span class="pill-count" id="pill-count-dirty">0</span></button>
+              <button class="filter-pill" data-filter="clean" type="button">Clean <span class="pill-count" id="pill-count-clean">0</span></button>
+            </div>
+          </div>
           <div class="dashboard-grid" id="dashboard-grid">
             <!-- Dashboard cards injected here -->
           </div>
@@ -158,7 +203,11 @@
                     <span id="toggle-stage-all-label">Select All</span>
                   </button>
                 </div>
-                <div style="display:flex;align-items:center;gap:10px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button class="btn btn-secondary btn-sm" id="review-changes-btn" onclick="event.stopPropagation(); handleReviewChanges();" title="Inspect diff for secret leaks, debug statements, and risk review" style="gap:5px;padding:3px 9px;">
+                    <i data-lucide="shield-alert" style="width:12px;height:12px;color:var(--accent);"></i>
+                    <span>Review Changes</span>
+                  </button>
                   <button class="btn-discard-all" id="discard-all-btn" onclick="event.stopPropagation(); handleDiscardAll();" title="Discard all uncommitted changes">
                     <i data-lucide="undo-2" style="width:11px;height:11px;"></i>
                     <span>Discard All</span>
@@ -230,10 +279,20 @@
               <div class="commit-panel">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
                   <span style="font-weight:600;font-size:13px;">Commit Changes</span>
-                  <button class="btn btn-ghost btn-sm" id="ai-generate-btn">
-                    <i data-lucide="sparkles" style="width:14px;height:14px;color:var(--accent);"></i>
-                    Generate AI Message
-                  </button>
+                  <div style="display:flex;align-items:center;gap:12px;">
+                    <div class="style-pills-container">
+                      <span class="style-pills-label">Style:</span>
+                      <div class="style-pills" id="commit-style-pills">
+                        <button class="style-pill active" data-style="conventional" type="button" title="Standard: feat(scope): message">Conventional</button>
+                        <button class="style-pill" data-style="concise" type="button" title="Short: Single imperative sentence">Concise</button>
+                        <button class="style-pill" data-style="detailed" type="button" title="Detailed: Subject line + bullet points">Detailed</button>
+                      </div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" id="ai-generate-btn">
+                      <i data-lucide="sparkles" style="width:14px;height:14px;color:var(--accent);"></i>
+                      Generate AI Message
+                    </button>
+                  </div>
                 </div>
                 <textarea class="commit-message-input" id="commit-message" placeholder="Enter commit message..." rows="2"></textarea>
                 <div class="commit-actions">
@@ -491,9 +550,81 @@
     </div>
   </div>
 
+  <!-- Command Palette Modal -->
+  <div class="modal-overlay hidden" id="command-palette-modal">
+    <div class="command-palette-container" id="command-palette-container">
+      <div class="command-palette-search-row">
+        <i data-lucide="search" class="command-search-icon" style="width:16px;height:16px;"></i>
+        <input type="text" id="command-palette-input" placeholder="Type a repository, action, or command..." autocomplete="off">
+        <span class="command-esc-badge" onclick="closeCommandPalette()">ESC</span>
+      </div>
+      <div class="command-palette-list" id="command-palette-list">
+        <!-- Injected command items -->
+      </div>
+      <div class="command-palette-footer">
+        <span><kbd>↑</kbd> <kbd>↓</kbd> to navigate</span>
+        <span><kbd>↵</kbd> to select</span>
+        <span><kbd>esc</kbd> to close</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Code Review Modal -->
+  <div class="modal-overlay hidden" id="code-review-modal">
+    <div class="modal-content" style="max-width:580px;">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <i data-lucide="shield-alert" style="width:18px;height:18px;color:var(--accent);"></i>
+          <span class="modal-title">Code Review & Safety Scan</span>
+        </div>
+        <button class="btn btn-ghost btn-icon btn-sm" id="close-review-modal">
+          <i data-lucide="x" style="width:16px;height:16px;"></i>
+        </button>
+      </div>
+      <div class="modal-body" id="review-modal-body">
+        <!-- Injected review content -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancel-review-modal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PR Description Modal -->
+  <div class="modal-overlay hidden" id="pr-description-modal">
+    <div class="modal-content" style="max-width:620px;">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <i data-lucide="git-pull-request" style="width:18px;height:18px;color:var(--accent);"></i>
+          <span class="modal-title">GitHub Pull Request Description</span>
+        </div>
+        <button class="btn btn-ghost btn-icon btn-sm" id="close-pr-modal">
+          <i data-lucide="x" style="width:16px;height:16px;"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="pr-title-input">PR Title</label>
+          <input type="text" class="form-input" id="pr-title-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="pr-body-input">PR Description (Markdown)</label>
+          <textarea class="form-input" id="pr-body-input" rows="12" style="font-family:monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancel-pr-modal">Close</button>
+        <button class="btn btn-primary" id="copy-pr-btn">
+          <i data-lucide="copy" style="width:14px;height:14px;"></i>
+          <span>Copy to Clipboard</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="/static/app.js?v=2.6"></script>
+  <script src="/static/app.js?v=4.0"></script>
 </body>
 </html>

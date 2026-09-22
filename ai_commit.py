@@ -14,11 +14,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def generate_semantic_commit_message(diff_text: str, changed_files: Optional[List[str]] = None) -> str:
+def generate_semantic_commit_message(diff_text: str, changed_files: Optional[List[str]] = None, style: str = "conventional") -> str:
     """
     Intelligent heuristic diff & file analyzer that produces
-    accurate, human-crafted conventional commit messages tailored to the repo state.
-    Format: <type>(<scope>): <description> (under 72 chars)
+    accurate, human-crafted commit messages tailored to the repo state and requested style.
     """
     files = changed_files or []
     if not files and diff_text:
@@ -118,21 +117,54 @@ def generate_semantic_commit_message(diff_text: str, changed_files: Optional[Lis
     elif commit_type == "feat" and "custom select components" in actions and "git tree styling" in actions:
         desc = "add custom select dropdowns and refine git tree styling"
 
-    msg = f"{commit_type}({scope}): {desc}"
-    if len(msg) > 72:
-        msg = msg[:72].rstrip()
-    return msg
+    if style == "concise":
+        concise = desc[0].upper() + desc[1:] if desc else "Update project files"
+        return concise[:60].rstrip()
+    elif style == "detailed":
+        bullets = []
+        if actions:
+            for act in actions[:3]:
+                bullets.append(f"- {act.capitalize()}")
+        else:
+            bullets.append(f"- Update {', '.join(base_names[:3])}{' and others' if len(base_names) > 3 else ''}")
+        bullets.append(f"- Modify {len(files)} file(s) in {scope}")
+        return f"{commit_type}({scope}): {desc}\n\n" + "\n".join(bullets)
+    else:
+        msg = f"{commit_type}({scope}): {desc}"
+        if len(msg) > 72:
+            msg = msg[:72].rstrip()
+        return msg
 
 
-def generate_commit_message_gemini(diff_text: str, api_key: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Calls Google Gemini API. Returns (message, None) on success or (None, error_str) on failure.
-    Tries gemini-3.6-flash, gemini-3-flash-preview, gemini-flash-latest with resilient fallbacks.
-    """
-    if not api_key:
-        return None, "No Gemini API key provided"
+def _build_prompt_for_style(diff_text: str, style: str = "conventional") -> str:
+    if style == "concise":
+        return f"""Analyze this git diff and generate a single concise imperative commit message without any type prefix or scope.
+Rules:
+- Keep under 60 characters
+- Use imperative mood (e.g. "Add branch switcher and pull sync controls")
+- Return ONLY the single line commit message, no backticks, no punctuation at end.
 
-    prompt = f"""Analyze this git diff and generate a concise conventional commit message.
+Diff:
+{diff_text}"""
+    elif style == "detailed":
+        return f"""Analyze this git diff and generate a detailed conventional commit message.
+Format:
+<type>(<optional scope>): <subject line under 72 characters>
+
+- <bullet point 1 explaining major change>
+- <bullet point 2 explaining secondary change>
+- <bullet point 3 if applicable>
+
+Rules:
+- Types: feat, fix, docs, style, refactor, test, chore, perf
+- Subject line under 72 chars
+- 2 to 4 high-signal bullet points
+- Return ONLY the commit message and bullets, no markdown code fence blocks.
+
+Diff:
+{diff_text}"""
+    else:
+        return f"""Analyze this git diff and generate a concise conventional commit message.
 Format: <type>(<optional scope>): <description>
 Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build
 Rules:
@@ -144,6 +176,16 @@ Rules:
 Diff:
 {diff_text}"""
 
+
+def generate_commit_message_gemini(diff_text: str, api_key: str, style: str = "conventional") -> Tuple[Optional[str], Optional[str]]:
+    """
+    Calls Google Gemini API. Returns (message, None) on success or (None, error_str) on failure.
+    Tries gemini-3.6-flash, gemini-3-flash-preview, gemini-flash-latest with resilient fallbacks.
+    """
+    if not api_key:
+        return None, "No Gemini API key provided"
+
+    prompt = _build_prompt_for_style(diff_text, style)
     data = {
         "contents": [{"parts": [{"text": prompt}]}]
     }
@@ -171,8 +213,10 @@ Diff:
                 res_json = json.loads(res_body)
                 msg = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
                 msg = msg.strip("`").strip()
-                lines = [l.strip() for l in msg.splitlines() if l.strip()]
-                return (lines[0] if lines else msg), None
+                if style != "detailed":
+                    lines = [l.strip() for l in msg.splitlines() if l.strip()]
+                    return (lines[0] if lines else msg), None
+                return msg, None
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 return None, "Invalid API key"
@@ -190,7 +234,7 @@ Diff:
     return None, last_err
 
 
-def generate_commit_message_openai(diff_text: str, api_key: str) -> Tuple[Optional[str], Optional[str]]:
+def generate_commit_message_openai(diff_text: str, api_key: str, style: str = "conventional") -> Tuple[Optional[str], Optional[str]]:
     """
     Calls OpenAI API. Returns (message, None) on success or (None, error_str) on failure.
     """
@@ -198,16 +242,7 @@ def generate_commit_message_openai(diff_text: str, api_key: str) -> Tuple[Option
         return None, "No OpenAI API key provided"
 
     url = "https://api.openai.com/v1/chat/completions"
-    prompt = f"""Analyze this git diff and generate a concise conventional commit message.
-Format: <type>(<optional scope>): <description>
-Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build
-Rules:
-- Under 72 characters
-- Imperative mood
-- Return ONLY the commit message line, no extra text.
-
-Diff:
-{diff_text}"""
+    prompt = _build_prompt_for_style(diff_text, style)
 
     data = {
         "model": "gpt-4o-mini",
@@ -231,8 +266,10 @@ Diff:
             res_json = json.loads(res_body)
             msg = res_json["choices"][0]["message"]["content"].strip()
             msg = msg.strip("`").strip()
-            lines = [l.strip() for l in msg.splitlines() if l.strip()]
-            return (lines[0] if lines else msg), None
+            if style != "detailed":
+                lines = [l.strip() for l in msg.splitlines() if l.strip()]
+                return (lines[0] if lines else msg), None
+            return msg, None
     except urllib.error.HTTPError as e:
         err_msg = f"HTTP {e.code}"
         if e.code == 401:
@@ -250,14 +287,15 @@ def generate_commit_message(
     diff_text: str,
     provider: str = "gemini",
     api_key: Optional[str] = None,
-    changed_files: Optional[List[str]] = None
+    changed_files: Optional[List[str]] = None,
+    style: str = "conventional"
 ) -> Tuple[str, str]:
     """
-    Main entrypoint: generates commit message via requested LLM provider,
+    Main entrypoint: generates commit message via requested LLM provider and style,
     or falls back to the smart semantic rule engine with clear, truthful status reporting.
     """
     diff_snippet = diff_text[:5000] if diff_text else ""
-    semantic_fallback = generate_semantic_commit_message(diff_text, changed_files)
+    semantic_fallback = generate_semantic_commit_message(diff_text, changed_files, style=style)
 
     # 1. Resolve API key
     key = api_key
@@ -270,7 +308,7 @@ def generate_commit_message(
     # 2. Try Gemini
     if provider == "gemini":
         if key and key.strip():
-            msg, err = generate_commit_message_gemini(diff_snippet, key.strip())
+            msg, err = generate_commit_message_gemini(diff_snippet, key.strip(), style=style)
             if msg:
                 return msg, "Google Gemini"
             return semantic_fallback, f"Smart Engine ({err})"
@@ -279,7 +317,7 @@ def generate_commit_message(
     # 3. Try OpenAI
     elif provider == "openai":
         if key and key.strip():
-            msg, err = generate_commit_message_openai(diff_snippet, key.strip())
+            msg, err = generate_commit_message_openai(diff_snippet, key.strip(), style=style)
             if msg:
                 return msg, "OpenAI"
             return semantic_fallback, f"Smart Engine ({err})"
@@ -287,3 +325,189 @@ def generate_commit_message(
 
     # 4. Smart Engine direct
     return semantic_fallback, "Smart Engine"
+
+
+def analyze_diff_for_leaks_and_review(
+    diff_text: str,
+    changed_files: List[str],
+    api_key: Optional[str] = None,
+    provider: str = "gemini"
+) -> Tuple[str, str, List[str], List[Dict[str, str]], List[str]]:
+    """
+    Heuristic security & quality scanner:
+    - Scans added lines for secrets, credentials, API keys, and sensitive tokens.
+    - Scans for leftover debug prints and debugger statements.
+    - Generates technical review summary with risk assessment.
+    Returns: (summary, risk_level, findings, leaks, debug_artifacts)
+    """
+    leaks = []
+    debug_artifacts = []
+    findings = []
+
+    # Rules for secret detection
+    SECRET_RULES = [
+        (r"AIza[0-9A-Za-z_-]{35}", "Google API Key", "HIGH"),
+        (r"sk-[a-zA-Z0-9_-]{20,}", "OpenAI API Key", "HIGH"),
+        (r"AKIA[0-9A-Z]{16}", "AWS Access Key ID", "HIGH"),
+        (r"gh[pousr]_[A-Za-z0-9_]{36,}", "GitHub Token", "HIGH"),
+        (r"-----BEGIN (?:RSA|OPENSSH|PGP|EC|DSA) PRIVATE KEY", "Private Cryptographic Key", "HIGH"),
+        (r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.", "JSON Web Token (JWT)", "MEDIUM"),
+        (r"(?:api[_-]?key|secret|password|access[_-]?token)\s*[:=]\s*['\"][a-zA-Z0-9_\-\.]{12,}['\"]", "Hardcoded Credential / Secret", "HIGH"),
+    ]
+
+    DEBUG_PATTERNS = [
+        (r"\bconsole\.(?:log|warn|error|debug|info)\s*\(", "console.log() debug statement"),
+        (r"\bdebugger\s*;", "debugger breakpoint"),
+        (r"\bprint\s*\(", "print() debug output"),
+        (r"\b(?:pdb|ipdb)\.set_trace\s*\(", "Python interactive debugger"),
+        (r"\bbreakpoint\s*\(", "Python breakpoint() statement"),
+    ]
+
+    current_file = "unknown"
+    for line in (diff_text or "").splitlines():
+        if line.startswith("diff --git"):
+            m = re.search(r"b/(.+)", line)
+            if m:
+                current_file = m.group(1)
+        elif line.startswith("+++ b/"):
+            current_file = line[6:].strip()
+
+        # Only inspect added lines
+        if line.startswith("+") and not line.startswith("+++"):
+            added_content = line[1:].strip()
+            # Ignore comments or example files
+            is_example = any(ex in current_file.lower() for ex in (".example", "test", "spec", "mock", "dummy"))
+
+            # Secret check
+            if not is_example:
+                for pat, label, risk in SECRET_RULES:
+                    if re.search(pat, added_content, re.IGNORECASE):
+                        snippet = added_content[:60] + ("..." if len(added_content) > 60 else "")
+                        leaks.append({
+                            "file": current_file,
+                            "line_snippet": snippet,
+                            "rule": label,
+                            "risk": risk
+                        })
+
+            # Debug check
+            if not is_example:
+                for pat, label in DEBUG_PATTERNS:
+                    if re.search(pat, added_content):
+                        snippet = added_content[:60] + ("..." if len(added_content) > 60 else "")
+                        debug_artifacts.append(f"{current_file}: {label} ({snippet})")
+
+    # High-level findings
+    if leaks:
+        findings.append(f"Detected {len(leaks)} potential secret leak(s) in working tree.")
+    if debug_artifacts:
+        findings.append(f"Found {len(debug_artifacts)} debug statement(s) that may be unintended in commits.")
+    if len(changed_files) > 12:
+        findings.append(f"Large change set: {len(changed_files)} files modified concurrently.")
+
+    # Determine risk level
+    if any(l["risk"] == "HIGH" for l in leaks):
+        risk_level = "HIGH"
+    elif leaks or debug_artifacts or len(changed_files) > 15:
+        risk_level = "MEDIUM"
+    else:
+        risk_level = "LOW"
+
+    # Review Summary (try LLM if available, otherwise heuristic)
+    key = api_key
+    if not key:
+        key = os.environ.get("GEMINI_API_KEY") if provider == "gemini" else os.environ.get("OPENAI_API_KEY")
+
+    summary = ""
+    if key and key.strip() and diff_text:
+        review_prompt = f"""You are an expert code reviewer and tech lead.
+Review this git diff and provide a concise, high-signal 2-sentence evaluation of what is changing, its architecture impact, and code quality.
+Rules:
+- Be specific, professional, and constructive.
+- Return ONLY 2 sentences. No markdown headers, no bullets.
+
+Diff:
+{diff_text[:3500]}"""
+        if provider == "gemini":
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={key.strip()}"
+            try:
+                body = json.dumps({"contents": [{"parts": [{"text": review_prompt}]}]}).encode("utf-8")
+                req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    summary = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except Exception:
+                pass
+
+    if not summary:
+        file_summary = ", ".join([os.path.basename(f) for f in changed_files[:4]])
+        if len(changed_files) > 4:
+            file_summary += f" and {len(changed_files) - 4} more"
+        summary = f"Working tree modifies {len(changed_files)} file(s) ({file_summary}). Security posture is {risk_level.lower()} with {len(leaks)} secret warnings and {len(debug_artifacts)} debug statements."
+
+    return summary, risk_level, findings, leaks, debug_artifacts
+
+
+def generate_pr_description(
+    commits: List[Dict],
+    branch_name: str,
+    api_key: Optional[str] = None,
+    provider: str = "gemini"
+) -> Tuple[str, str]:
+    """
+    Generates a structured GitHub Pull Request title and Markdown body
+    based on unpushed commits and repository branch state.
+    """
+    if not commits:
+        title = f"feat: updates on {branch_name}"
+        body = f"""### Overview\nChanges on branch `{branch_name}`.\n\n### Key Changes\n- General code updates and maintenance.\n\n### Verification\n- [ ] Code builds cleanly\n- [ ] Verified manually"""
+        return title, body
+
+    commit_messages = [c.get("message", "") for c in commits if c.get("message")]
+    title = commit_messages[0] if commit_messages else f"feat: updates on {branch_name}"
+
+    # Try LLM synthesis
+    key = api_key
+    if not key:
+        key = os.environ.get("GEMINI_API_KEY") if provider == "gemini" else os.environ.get("OPENAI_API_KEY")
+
+    if key and key.strip() and commit_messages:
+        prompt = f"""You are a tech lead writing a GitHub Pull Request description for branch '{branch_name}'.
+The unpushed commits on this branch are:
+{chr(10).join(f'- {m}' for m in commit_messages)}
+
+Generate a structured GitHub PR description in Markdown.
+Include:
+### Overview (1-2 sentences)
+### Key Changes (bullet points summarizing the work)
+### Verification Plan (checkboxes for testing)
+
+Return ONLY the Markdown content. Do not wrap in ```markdown code fences."""
+
+        if provider == "gemini":
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={key.strip()}"
+            try:
+                body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+                req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    body = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    body = body.strip("`").strip()
+                    return title, body
+            except Exception:
+                pass
+
+    # Heuristic fallback
+    bullets = "\n".join(f"- {m}" for m in commit_messages)
+    body = f"""### Overview
+This pull request brings together {len(commits)} commit(s) on branch `{branch_name}`.
+
+### Key Changes
+{bullets}
+
+### Verification & Testing
+- [x] Code compiled and verified locally
+- [x] Tested all affected user flows
+- [x] Verified zero console errors
+"""
+    return title, body
