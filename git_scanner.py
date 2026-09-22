@@ -172,11 +172,11 @@ def _compute_health(repo: Repo, branch: BranchInfo, changed_files: list, stalene
         pass
     return RepoHealth.CLEAN
 
-def get_repo_status(path: str) -> RepoStatus:
+def get_repo_status(path: str, staleness_days: int = 14) -> RepoStatus:
     repo = Repo(path)
     changed_files = get_changed_files(repo)
     branch = get_branch_info(repo)
-    health = _compute_health(repo, branch, changed_files, 3)
+    health = _compute_health(repo, branch, changed_files, staleness_days)
     
     untracked_count = sum(1 for c in changed_files if c.status == FileStatus.UNTRACKED)
     stashes = get_stash_list(repo)

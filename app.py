@@ -279,7 +279,8 @@ def _find_repo_path(repo_id: str) -> str:
 async def repo_status(repo_id: str):
     path = _find_repo_path(repo_id)
     try:
-        status = get_repo_status(path)
+        config = load_config()
+        status = get_repo_status(path, config.settings.staleness_threshold_days)
         return status.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
