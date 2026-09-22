@@ -51,6 +51,23 @@ class BranchInfo(BaseModel):
     ahead: int = 0
     behind: int = 0
 
+class BranchItem(BaseModel):
+    name: str
+    is_active: bool = False
+    is_remote: bool = False
+    tracking: Optional[str] = None
+
+class CheckoutBranchRequest(BaseModel):
+    branch_name: str
+    create: bool = False
+
+class CreateStashRequest(BaseModel):
+    message: Optional[str] = None
+    include_untracked: bool = True
+
+class DiscardRequest(BaseModel):
+    files: Optional[List[str]] = None
+
 class RepoStatus(BaseModel):
     id: str
     name: str

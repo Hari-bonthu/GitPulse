@@ -8,7 +8,7 @@
   <title>GitPulse — Multi-Repo Git Dashboard</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="/static/site.webmanifest">
-  <link rel="stylesheet" href="/static/styles.css?v=2.6">
+  <link rel="stylesheet" href="/static/styles.css?v=3.1">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -159,6 +159,10 @@
                   </button>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
+                  <button class="btn-discard-all" id="discard-all-btn" onclick="event.stopPropagation(); handleDiscardAll();" title="Discard all uncommitted changes">
+                    <i data-lucide="undo-2" style="width:11px;height:11px;"></i>
+                    <span>Discard All</span>
+                  </button>
                   <span id="selected-files-summary" style="font-size:11px;color:var(--text-muted);"></span>
                   <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
                 </div>
@@ -194,10 +198,15 @@
                   <i data-lucide="archive"></i>
                   <span>Stash</span>
                   <span class="section-badge" id="stash-count">0</span>
+                  <button class="btn btn-selection-toggle" id="stash-create-btn" onclick="event.stopPropagation(); toggleStashCreateForm();" title="Stash current changes">
+                    <i data-lucide="plus" style="width:12px;height:12px;"></i>
+                    <span>Stash Changes</span>
+                  </button>
                 </div>
                 <i data-lucide="chevron-down" style="width:14px;height:14px;color:var(--text-muted);"></i>
               </div>
               <div class="section-content" id="stash-content">
+                <div id="stash-create-form-container" class="hidden"></div>
                 <div id="stash-list"></div>
               </div>
             </div>

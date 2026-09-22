@@ -18,14 +18,17 @@ from models import (
     AppConfig, Settings, RepoConfig, AddRepoRequest, InitRepoRequest, PublishRepoRequest, CommitRequest,
     StageRequest, GenerateCommitMessageRequest, GenerateCommitMessageResponse,
     DashboardSummary, RepoStatus, RepoSummary, RepoHealth, TreeNode,
-    CommitEntry, StashEntry, ChangedFile
+    CommitEntry, StashEntry, ChangedFile, BranchItem, CheckoutBranchRequest,
+    CreateStashRequest, DiscardRequest
 )
 from git_scanner import (
     validate_git_repo, get_repo_id, get_repo_status, get_repo_summary,
     get_changed_files, build_file_tree, get_branch_info, get_commit_log,
     get_stash_list, get_diff_for_file, stage_files, unstage_files,
     commit_changes, push_changes, apply_stash, pop_stash, drop_stash,
-    check_repo_access, init_repo, publish_repo_to_remote
+    check_repo_access, init_repo, publish_repo_to_remote,
+    list_branches, checkout_branch, fetch_remote, pull_changes,
+    discard_file_changes, discard_all_changes, create_stash
 )
 from ai_commit import generate_commit_message
 from notifier import NotificationManager, NotificationScheduler
@@ -288,6 +291,42 @@ async def repo_log(repo_id: str, count: int = Query(15)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Branches ---
+@app.get("/api/repos/{repo_id}/branches")
+async def repo_branches(repo_id: str):
+    path = _find_repo_path(repo_id)
+    branches = list_branches(path)
+    return [b.model_dump() for b in branches]
+
+
+@app.post("/api/repos/{repo_id}/branches/checkout")
+async def repo_checkout(repo_id: str, req: CheckoutBranchRequest):
+    path = _find_repo_path(repo_id)
+    ok, msg = checkout_branch(path, req.branch_name, req.create)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"message": msg}
+
+
+# --- Remote Sync ---
+@app.post("/api/repos/{repo_id}/fetch")
+async def repo_fetch(repo_id: str):
+    path = _find_repo_path(repo_id)
+    ok, msg = fetch_remote(path)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"message": msg}
+
+
+@app.post("/api/repos/{repo_id}/pull")
+async def repo_pull(repo_id: str):
+    path = _find_repo_path(repo_id)
+    ok, msg = pull_changes(path)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"message": msg}
+
+
 # --- Stash ---
 @app.get("/api/repos/{repo_id}/stash")
 async def repo_stash(repo_id: str):
@@ -298,6 +337,15 @@ async def repo_stash(repo_id: str):
         return [s.model_dump() for s in stashes]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/repos/{repo_id}/stash")
+async def stash_create(repo_id: str, req: CreateStashRequest):
+    path = _find_repo_path(repo_id)
+    ok, msg = create_stash(path, req.message, req.include_untracked)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"message": msg}
 
 
 @app.post("/api/repos/{repo_id}/stash/apply")
@@ -325,6 +373,29 @@ async def stash_drop(repo_id: str, index: int):
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"message": msg}
+
+
+# --- Discard Changes ---
+@app.post("/api/repos/{repo_id}/discard")
+async def discard_changes(repo_id: str, req: DiscardRequest):
+    path = _find_repo_path(repo_id)
+
+    if req.files and len(req.files) > 0:
+        results = []
+        any_failed = False
+        for f in req.files:
+            ok, msg = discard_file_changes(path, f)
+            results.append({"file": f, "ok": ok, "message": msg})
+            if not ok:
+                any_failed = True
+        if any_failed and all(not r["ok"] for r in results):
+            raise HTTPException(status_code=400, detail="Failed to discard all files")
+        return {"message": f"Discarded {sum(1 for r in results if r['ok'])} file(s)", "results": results}
+    else:
+        ok, msg = discard_all_changes(path)
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+        return {"message": msg}
 
 
 # --- Stage / Unstage ---

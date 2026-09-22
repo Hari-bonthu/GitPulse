@@ -595,6 +595,256 @@ html, body {
 .ahead-behind .ahead { color: var(--success); }
 .ahead-behind .behind { color: var(--warning); }
 
+/* --- Branch Picker Popover --- */
+.branch-picker {
+  position: relative;
+}
+
+.branch-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-muted);
+  color: var(--accent);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 12px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s var(--ease-out);
+}
+.branch-picker-trigger:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.25);
+}
+.branch-picker-trigger:active {
+  transform: scale(0.97);
+}
+
+.branch-picker-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 290px;
+  max-height: 360px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  animation: popoverDown 160ms var(--ease-out);
+  overflow: hidden;
+}
+
+.branch-picker-search {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+.branch-picker-search input {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s var(--ease-out);
+}
+.branch-picker-search input:focus {
+  border-color: var(--accent);
+}
+.branch-picker-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.branch-picker-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  max-height: 240px;
+}
+
+.branch-picker-group-label {
+  padding: 6px 12px 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.branch-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 0.1s var(--ease-out);
+}
+.branch-picker-item:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+.branch-picker-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.branch-picker-item .check-icon {
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.branch-picker-create {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+}
+.branch-picker-create-row {
+  display: flex;
+  gap: 6px;
+}
+.branch-picker-create input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+.branch-picker-create input:focus {
+  border-color: var(--accent);
+}
+
+/* --- Sync Button Group --- */
+.sync-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s var(--ease-out);
+}
+.btn-sync:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+.btn-sync:active {
+  transform: scale(0.97);
+}
+.btn-sync.pull-btn {
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+.btn-sync.pull-btn:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.25);
+}
+
+/* --- Discard Button (inline per-file) --- */
+.tree-item .tree-discard-btn {
+  opacity: 0;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s var(--ease-out);
+}
+.tree-item:hover .tree-discard-btn {
+  opacity: 1;
+}
+.tree-item .tree-discard-btn:hover {
+  color: var(--error);
+  background: var(--error-muted);
+}
+.tree-item .tree-discard-btn:active {
+  transform: scale(0.9);
+}
+
+/* --- Discard All Button --- */
+.btn-discard-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.15s var(--ease-out);
+}
+.btn-discard-all:hover {
+  border-color: var(--error);
+  color: var(--error);
+  background: var(--error-muted);
+}
+.btn-discard-all:active {
+  transform: scale(0.97);
+}
+
+/* --- Stash Create Inline Form --- */
+.stash-create-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  animation: fadeIn 150ms var(--ease-out);
+}
+.stash-create-form input[type="text"] {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s var(--ease-out);
+}
+.stash-create-form input[type="text"]:focus {
+  border-color: var(--accent);
+}
+.stash-create-form input[type="text"]::placeholder {
+  color: var(--text-muted);
+}
+
 /* --- Section Panel --- */
 .section-panel {
   background: var(--bg-card);

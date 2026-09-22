@@ -390,9 +390,12 @@ function renderRepoDetail(status, tree, log, stash) {
   // Branch bar
   const hasRemote = Boolean(status.branch.remote_name);
   $('#branch-bar').innerHTML = `
-    <div class="branch-tag">
-      <i data-lucide="git-branch" style="width:14px;height:14px;"></i>
-      ${esc(status.branch.name)}
+    <div class="branch-picker" id="branch-picker">
+      <button class="branch-picker-trigger" id="branch-picker-trigger" type="button" title="Switch or create branch">
+        <i data-lucide="git-branch" style="width:14px;height:14px;"></i>
+        <span>${esc(status.branch.name)}</span>
+        <i data-lucide="chevron-down" style="width:12px;height:12px;opacity:0.6;"></i>
+      </button>
     </div>
     ${hasRemote ? `<span style="color:var(--text-muted);font-size:12px;">→ ${esc(status.branch.remote_name)}</span>` : `
       <button class="btn btn-primary btn-sm" onclick="openPublishModal()" style="gap:6px;padding:3px 9px;" title="Publish this local repository to GitHub">
@@ -408,6 +411,20 @@ function renderRepoDetail(status, tree, log, stash) {
       </div>
     ` : ''}
     <div style="flex:1;"></div>
+    ${hasRemote ? `
+      <div class="sync-btn-group">
+        <button class="btn-sync fetch-btn" onclick="handleFetch()" title="Fetch latest refs from remote">
+          <i data-lucide="refresh-cw" style="width:12px;height:12px;"></i>
+          <span>Fetch</span>
+        </button>
+        ${status.branch.behind > 0 ? `
+          <button class="btn-sync pull-btn" onclick="handlePull()" title="Pull ${status.branch.behind} commit${status.branch.behind > 1 ? 's' : ''} from upstream">
+            <i data-lucide="arrow-down-to-line" style="width:12px;height:12px;"></i>
+            <span>Pull</span>
+          </button>
+        ` : ''}
+      </div>
+    ` : ''}
     <span style="font-size:12px;color:var(--text-muted);">
       ${status.last_commit_time ? `Last commit: ${esc(status.last_commit_time)}` : 'No commits'}
     </span>
@@ -432,6 +449,15 @@ function renderRepoDetail(status, tree, log, stash) {
   $('#diff-filename').textContent = '';
 
   refreshIcons();
+
+  // Bind branch picker trigger
+  const trigger = document.getElementById('branch-picker-trigger');
+  if (trigger) {
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleBranchPicker();
+    });
+  }
 }
 
 // --- Git Tree Helpers (Emil Kowalski Design) ---
@@ -551,6 +577,9 @@ function buildTreeHTML(nodes, level) {
           <i data-lucide="${icon}" class="tree-file-icon"></i>
           <span class="tree-item-name">${esc(node.name)}</span>
           <span class="git-status-badge ${statusCls}">${badge}</span>
+          <button class="tree-discard-btn" onclick="event.stopPropagation(); handleDiscardFile('${esc(node.path)}')" title="Discard changes to this file">
+            <i data-lucide="undo-2" style="width:12px;height:12px;"></i>
+          </button>
         </div>
       `;
     }
@@ -886,6 +915,318 @@ window.handleStash = async function(action, index) {
     } catch {}
   }
 };
+
+// --- Branch Picker ---
+window.toggleBranchPicker = async function() {
+  const existing = document.getElementById('branch-picker-popover');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+
+  let branches;
+  try {
+    branches = await api('GET', `/repos/${id}/branches`);
+  } catch {
+    Toast.error('Failed to load branches');
+    return;
+  }
+
+  const localBranches = branches.filter(b => !b.is_remote);
+  const remoteBranches = branches.filter(b => b.is_remote);
+
+  const picker = document.getElementById('branch-picker');
+  if (!picker) return;
+
+  const popover = document.createElement('div');
+  popover.className = 'branch-picker-popover';
+  popover.id = 'branch-picker-popover';
+
+  popover.innerHTML = `
+    <div class="branch-picker-search">
+      <input type="text" id="branch-search-input" placeholder="Search or filter branches..." autocomplete="off" />
+    </div>
+    <div class="branch-picker-list" id="branch-picker-list">
+      ${localBranches.length > 0 ? `
+        <div class="branch-picker-group-label">Local Branches</div>
+        ${localBranches.map(b => `
+          <div class="branch-picker-item ${b.is_active ? 'active' : ''}" data-branch="${esc(b.name)}" data-remote="false">
+            <span class="check-icon">${b.is_active ? '<i data-lucide="check" style="width:12px;height:12px;"></i>' : ''}</span>
+            <span>${esc(b.name)}</span>
+            ${b.tracking ? `<span style="font-size:10px;color:var(--text-muted);margin-left:auto;">${esc(b.tracking)}</span>` : ''}
+          </div>
+        `).join('')}
+      ` : ''}
+      ${remoteBranches.length > 0 ? `
+        <div class="branch-picker-group-label">Remote Branches</div>
+        ${remoteBranches.map(b => {
+          const shortName = b.name.includes('/') ? b.name.split('/').slice(1).join('/') : b.name;
+          return `
+            <div class="branch-picker-item" data-branch="${esc(b.name)}" data-remote="true">
+              <span class="check-icon"></span>
+              <span>${esc(shortName)}</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:auto;">${esc(b.name.split('/')[0])}</span>
+            </div>
+          `;
+        }).join('')}
+      ` : ''}
+    </div>
+    <div class="branch-picker-create">
+      <div class="branch-picker-create-row">
+        <input type="text" id="new-branch-input" placeholder="New branch name..." />
+        <button class="btn btn-primary btn-sm" id="create-branch-btn" style="white-space:nowrap;padding:4px 10px;">
+          <i data-lucide="plus" style="width:12px;height:12px;"></i>
+          Create
+        </button>
+      </div>
+    </div>
+  `;
+
+  picker.appendChild(popover);
+  refreshIcons();
+
+  const searchInput = document.getElementById('branch-search-input');
+  if (searchInput) {
+    searchInput.focus();
+    searchInput.addEventListener('input', () => {
+      const query = searchInput.value.toLowerCase().trim();
+      popover.querySelectorAll('.branch-picker-item').forEach(item => {
+        const name = (item.dataset.branch || '').toLowerCase();
+        item.style.display = name.includes(query) ? '' : 'none';
+      });
+    });
+  }
+
+  popover.querySelectorAll('.branch-picker-item').forEach(item => {
+    item.addEventListener('click', async () => {
+      const branchName = item.dataset.branch;
+      if (item.classList.contains('active')) {
+        popover.remove();
+        return;
+      }
+
+      if (state.repoDetail?.changed_files?.length > 0) {
+        showConfirm(
+          'Switch Branch with Uncommitted Changes',
+          `You have ${state.repoDetail.changed_files.length} uncommitted file(s). Switching to '${branchName}' may cause conflicts or changes to carry over.\n\nSwitch branch anyway?`,
+          async () => {
+            try {
+              await Toast.promise(
+                api('POST', `/repos/${id}/branches/checkout`, { branch_name: branchName }),
+                { loading: `Switching to ${branchName}...`, success: (r) => r.message, error: (e) => e.message }
+              );
+              popover.remove();
+              selectRepo(id);
+            } catch {}
+          }
+        );
+        return;
+      }
+
+      try {
+        await Toast.promise(
+          api('POST', `/repos/${id}/branches/checkout`, { branch_name: branchName }),
+          { loading: `Switching to ${branchName}...`, success: (r) => r.message, error: (e) => e.message }
+        );
+        popover.remove();
+        selectRepo(id);
+      } catch {}
+    });
+  });
+
+  const createBtn = document.getElementById('create-branch-btn');
+  const newBranchInput = document.getElementById('new-branch-input');
+  if (createBtn && newBranchInput) {
+    const doCreate = async () => {
+      const name = newBranchInput.value.trim();
+      if (!name) {
+        Toast.warning('Enter a branch name');
+        newBranchInput.focus();
+        return;
+      }
+      if (!/^[a-zA-Z0-9._\/-]+$/.test(name)) {
+        Toast.error('Invalid branch name. Use alphanumeric, dots, hyphens, underscores, or slashes.');
+        return;
+      }
+      try {
+        await Toast.promise(
+          api('POST', `/repos/${id}/branches/checkout`, { branch_name: name, create: true }),
+          { loading: `Creating branch '${name}'...`, success: (r) => r.message, error: (e) => e.message }
+        );
+        popover.remove();
+        selectRepo(id);
+      } catch {}
+    };
+    createBtn.addEventListener('click', doCreate);
+    newBranchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doCreate();
+    });
+  }
+
+  const closeHandler = (e) => {
+    if (!popover.contains(e.target) && !document.getElementById('branch-picker-trigger')?.contains(e.target)) {
+      popover.remove();
+      document.removeEventListener('click', closeHandler);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeHandler), 10);
+};
+
+// --- Fetch & Pull ---
+window.handleFetch = async function() {
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+  try {
+    await Toast.promise(
+      api('POST', `/repos/${id}/fetch`),
+      { loading: 'Fetching remote...', success: (r) => r.message, error: (e) => e.message }
+    );
+    selectRepo(id);
+  } catch {}
+};
+
+window.handlePull = async function() {
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+
+  if (state.repoDetail?.changed_files?.length > 0) {
+    showConfirm(
+      'Pull with Uncommitted Changes',
+      `You have ${state.repoDetail.changed_files.length} uncommitted change(s). Pulling may result in merge conflicts.\n\nProceed with pull?`,
+      async () => {
+        try {
+          await Toast.promise(
+            api('POST', `/repos/${id}/pull`),
+            { loading: 'Pulling from remote...', success: (r) => r.message, error: (e) => e.message }
+          );
+          selectRepo(id);
+        } catch {}
+      }
+    );
+    return;
+  }
+
+  try {
+    await Toast.promise(
+      api('POST', `/repos/${id}/pull`),
+      { loading: 'Pulling from remote...', success: (r) => r.message, error: (e) => e.message }
+    );
+    selectRepo(id);
+  } catch {}
+};
+
+// --- Discard Changes ---
+window.handleDiscardFile = function(filePath) {
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+
+  showConfirm(
+    'Discard Changes',
+    `Permanently discard all modifications in "${filePath}"? This cannot be undone.`,
+    async () => {
+      try {
+        await Toast.promise(
+          api('POST', `/repos/${id}/discard`, { files: [filePath] }),
+          { loading: 'Discarding changes...', success: 'Changes discarded', error: (e) => e.message }
+        );
+        state.stagedFiles.delete(filePath);
+        selectRepo(id);
+      } catch {}
+    }
+  );
+};
+
+window.handleDiscardAll = function() {
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+
+  const count = state.repoDetail?.changed_files?.length || 0;
+  if (count === 0) {
+    Toast.info('No changes to discard');
+    return;
+  }
+
+  showConfirm(
+    'Discard All Changes',
+    `Permanently discard ALL ${count} changed and untracked file(s)? This action CANNOT be undone.`,
+    async () => {
+      try {
+        await Toast.promise(
+          api('POST', `/repos/${id}/discard`, {}),
+          { loading: 'Discarding all changes...', success: 'All changes discarded', error: (e) => e.message }
+        );
+        state.stagedFiles.clear();
+        selectRepo(id);
+      } catch {}
+    }
+  );
+};
+
+// --- Stash Creation ---
+window.toggleStashCreateForm = function() {
+  const container = document.getElementById('stash-create-form-container');
+  if (!container) return;
+
+  if (container.classList.contains('hidden')) {
+    container.classList.remove('hidden');
+    container.innerHTML = `
+      <div class="stash-create-form">
+        <input type="text" id="stash-message-input" placeholder="Stash message (optional)..." />
+        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);white-space:nowrap;cursor:pointer;">
+          <input type="checkbox" id="stash-include-untracked" checked style="accent-color:var(--accent);" />
+          Include untracked
+        </label>
+        <button class="btn btn-primary btn-sm" id="stash-submit-btn" style="white-space:nowrap;">
+          <i data-lucide="archive" style="width:12px;height:12px;"></i>
+          Stash
+        </button>
+      </div>
+    `;
+    refreshIcons();
+
+    const input = document.getElementById('stash-message-input');
+    if (input) input.focus();
+
+    document.getElementById('stash-submit-btn')?.addEventListener('click', submitStash);
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitStash();
+    });
+  } else {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+  }
+};
+
+async function submitStash() {
+  if (!state.selectedRepoId) return;
+  const id = state.selectedRepoId;
+
+  const messageInput = document.getElementById('stash-message-input');
+  const untrackedCheckbox = document.getElementById('stash-include-untracked');
+  const message = messageInput?.value.trim() || null;
+  const includeUntracked = untrackedCheckbox ? untrackedCheckbox.checked : true;
+
+  try {
+    await Toast.promise(
+      api('POST', `/repos/${id}/stash`, {
+        message: message,
+        include_untracked: includeUntracked,
+      }),
+      { loading: 'Stashing changes...', success: (r) => r.message, error: (e) => e.message }
+    );
+
+    const container = document.getElementById('stash-create-form-container');
+    if (container) {
+      container.classList.add('hidden');
+      container.innerHTML = '';
+    }
+    state.stagedFiles.clear();
+    selectRepo(id);
+  } catch {}
+}
 
 // --- Commit ---
 window.handleCommit = async function() {

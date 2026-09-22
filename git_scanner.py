@@ -428,3 +428,240 @@ def check_repo_access(repo_path: str) -> Tuple[bool, str]:
         return True, "Access ok"
     except Exception as e:
         return False, str(e)
+
+
+def list_branches(repo_path: str) -> List[BranchItem]:
+    """List all local and remote branches with active HEAD indicator."""
+    try:
+        repo = Repo(repo_path)
+        branches = []
+
+        try:
+            active_name = repo.active_branch.name
+        except (TypeError, ValueError):
+            active_name = None
+
+        # Local branches
+        for head in repo.heads:
+            tracking = None
+            try:
+                tb = head.tracking_branch()
+                if tb:
+                    tracking = tb.name
+            except Exception:
+                pass
+            branches.append(BranchItem(
+                name=head.name,
+                is_active=(head.name == active_name),
+                is_remote=False,
+                tracking=tracking,
+            ))
+
+        # Remote branches (exclude HEAD pointers like origin/HEAD)
+        for remote in repo.remotes:
+            for ref in remote.refs:
+                ref_short = ref.remote_head
+                if ref_short == "HEAD":
+                    continue
+                branches.append(BranchItem(
+                    name=ref.name,  # e.g. "origin/main"
+                    is_active=False,
+                    is_remote=True,
+                    tracking=None,
+                ))
+
+        return branches
+    except Exception:
+        return []
+
+
+def checkout_branch(repo_path: str, branch_name: str, create: bool = False) -> Tuple[bool, str]:
+    """Switch to an existing branch or create a new one."""
+    try:
+        repo = Repo(repo_path)
+
+        if create:
+            if branch_name in [h.name for h in repo.heads]:
+                return False, f"Branch '{branch_name}' already exists"
+            repo.git.checkout('-b', branch_name)
+            return True, f"Created and switched to branch '{branch_name}'"
+
+        # Check if it's a remote branch reference (e.g. origin/feature-x)
+        is_remote_ref = '/' in branch_name and branch_name not in [h.name for h in repo.heads]
+        if is_remote_ref:
+            parts = branch_name.split('/', 1)
+            local_name = parts[1] if len(parts) == 2 else branch_name
+            if local_name in [h.name for h in repo.heads]:
+                repo.git.checkout(local_name)
+                return True, f"Switched to existing local branch '{local_name}'"
+            repo.git.checkout('-b', local_name, '--track', branch_name)
+            return True, f"Created local branch '{local_name}' tracking '{branch_name}'"
+
+        if branch_name not in [h.name for h in repo.heads]:
+            return False, f"Branch '{branch_name}' not found"
+
+        repo.git.checkout(branch_name)
+        return True, f"Switched to branch '{branch_name}'"
+
+    except git.GitCommandError as e:
+        err = e.stderr.strip() if e.stderr else str(e)
+        return False, err
+    except Exception as e:
+        return False, str(e)
+
+
+def fetch_remote(repo_path: str, remote_name: str = "origin") -> Tuple[bool, str]:
+    """Fetch latest refs from the specified remote."""
+    try:
+        repo = Repo(repo_path)
+        if not repo.remotes:
+            return False, "No remote configured"
+
+        remote_names = [r.name for r in repo.remotes]
+        if remote_name not in remote_names:
+            remote_name = remote_names[0]
+
+        repo.git.fetch(remote_name)
+        return True, f"Fetched from '{remote_name}'"
+    except git.GitCommandError as e:
+        err = e.stderr.strip() if e.stderr else str(e)
+        return False, err
+    except Exception as e:
+        return False, str(e)
+
+
+def pull_changes(repo_path: str, rebase: bool = False) -> Tuple[bool, str]:
+    """Pull upstream changes into the current branch."""
+    try:
+        repo = Repo(repo_path)
+
+        try:
+            tracking = repo.active_branch.tracking_branch()
+        except (TypeError, ValueError):
+            return False, "Cannot pull: HEAD is detached"
+
+        if not tracking:
+            return False, "No upstream tracking branch configured. Push first to set upstream."
+
+        args = ['--rebase'] if rebase else []
+        result = repo.git.pull(*args)
+
+        if repo.index.unmerged_blobs():
+            return False, "Pull completed with merge conflicts. Resolve conflicts before committing."
+
+        summary = result.strip() if result else "Already up to date"
+        if len(summary) > 200:
+            summary = summary[:200] + "..."
+        return True, summary
+
+    except git.GitCommandError as e:
+        err = e.stderr.strip() if e.stderr else str(e)
+        if "CONFLICT" in str(e) or "Merge conflict" in str(e):
+            return False, "Merge conflict detected. Resolve conflicts manually before continuing."
+        if "Could not resolve host" in err:
+            return False, "Network error: could not reach remote. Check your internet connection."
+        return False, err
+    except Exception as e:
+        return False, str(e)
+
+
+def discard_file_changes(repo_path: str, file_path: str) -> Tuple[bool, str]:
+    """Discard working tree changes for a single file."""
+    try:
+        repo = Repo(repo_path)
+        full_path = Path(repo_path) / file_path
+
+        # If untracked
+        if file_path in repo.untracked_files:
+            if full_path.exists():
+                if full_path.is_dir():
+                    import shutil
+                    shutil.rmtree(str(full_path))
+                else:
+                    full_path.unlink()
+                return True, f"Removed untracked file '{file_path}'"
+            return False, f"File '{file_path}' not found on disk"
+
+        # If tracked, unstage first if staged, then checkout from HEAD
+        try:
+            repo.git.restore('--staged', file_path)
+        except Exception:
+            pass
+
+        try:
+            repo.git.checkout('HEAD', '--', file_path)
+            return True, f"Discarded changes in '{file_path}'"
+        except git.GitCommandError:
+            try:
+                repo.git.restore(file_path)
+                return True, f"Discarded changes in '{file_path}'"
+            except git.GitCommandError as e2:
+                return False, e2.stderr.strip() if e2.stderr else str(e2)
+
+    except Exception as e:
+        return False, str(e)
+
+
+def discard_all_changes(repo_path: str) -> Tuple[bool, str]:
+    """Discard ALL working tree changes: restore tracked files and remove untracked files."""
+    try:
+        repo = Repo(repo_path)
+        errors = []
+
+        # Reset index
+        try:
+            repo.git.reset('HEAD')
+        except Exception:
+            pass
+
+        # Restore tracked modifications
+        try:
+            repo.git.checkout('HEAD', '--', '.')
+        except git.GitCommandError:
+            pass
+
+        # Remove untracked files and directories
+        untracked = list(repo.untracked_files)
+        if untracked:
+            for f in untracked:
+                try:
+                    full_path = Path(repo_path) / f
+                    if full_path.exists():
+                        if full_path.is_dir():
+                            import shutil
+                            shutil.rmtree(str(full_path))
+                        else:
+                            full_path.unlink()
+                except Exception as e:
+                    errors.append(f"{f}: {str(e)}")
+
+        if errors:
+            return True, f"Discarded changes with {len(errors)} warning(s): {'; '.join(errors[:3])}"
+        return True, "All changes discarded"
+
+    except Exception as e:
+        return False, str(e)
+
+
+def create_stash(repo_path: str, message: Optional[str] = None, include_untracked: bool = True) -> Tuple[bool, str]:
+    """Create a new stash entry with optional message."""
+    try:
+        repo = Repo(repo_path)
+
+        if not repo.is_dirty(untracked_files=include_untracked):
+            return False, "No changes to stash"
+
+        args = ['push']
+        if include_untracked:
+            args.append('-u')
+        if message:
+            args.extend(['-m', message])
+
+        repo.git.stash(*args)
+        return True, f"Changes stashed{' as: ' + message if message else ''}"
+
+    except git.GitCommandError as e:
+        err = e.stderr.strip() if e.stderr else str(e)
+        return False, err
+    except Exception as e:
+        return False, str(e)
