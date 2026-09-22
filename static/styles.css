@@ -2422,6 +2422,45 @@ html, body {
   font-family: monospace;
 }
 
+/* --- Push Actions & Interactive Badges --- */
+.btn-sync.push-btn {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.btn-sync.push-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+.btn-sync.push-btn:active {
+  transform: scale(0.97);
+}
+.repo-health-pill.clickable {
+  cursor: pointer;
+  transition: all 150ms var(--ease-out);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+.repo-health-pill.clickable:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.25);
+}
+.repo-health-pill.clickable:active {
+  transform: scale(0.96);
+}
+.dash-card-stat-clickable {
+  cursor: pointer;
+  transition: all 120ms var(--ease-out);
+}
+.dash-card-stat-clickable:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+.dash-card-stat-clickable:active {
+  transform: scale(0.97);
+}
+
 /* --- Responsive --- */
 @media (max-width: 768px) {
   .sidebar { display: none; }

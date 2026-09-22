@@ -28,7 +28,7 @@
   <meta name="twitter:description" content="Local web dashboard to monitor git statuses, commit history, diffs, stashes, and branch health across all your repositories.">
   <meta name="twitter:image" content="/static/favicon-512x512.png">
 
-  <link rel="stylesheet" href="/static/styles.css?v=4.0">
+  <link rel="stylesheet" href="/static/styles.css?v=4.1">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -297,6 +297,10 @@
                 <textarea class="commit-message-input" id="commit-message" placeholder="Enter commit message..." rows="2"></textarea>
                 <div class="commit-actions">
                   <div style="flex:1;font-size:12px;color:var(--text-muted);" id="commit-selection-hint"></div>
+                  <button class="btn btn-primary hidden" id="direct-push-btn" onclick="handlePush()" style="gap:6px;" title="Push unpushed commits to remote">
+                    <i data-lucide="arrow-up-to-line" style="width:14px;height:14px;"></i>
+                    <span id="direct-push-label">Push Commits</span>
+                  </button>
                   <div class="btn-dropdown-group" id="commit-dropdown">
                     <button class="btn btn-primary btn-dropdown-main" id="commit-main-btn">
                       <i data-lucide="git-commit-horizontal" id="commit-main-icon" style="width:14px;height:14px;"></i>
@@ -625,6 +629,6 @@
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="/static/app.js?v=4.0"></script>
+  <script src="/static/app.js?v=4.1"></script>
 </body>
 </html>

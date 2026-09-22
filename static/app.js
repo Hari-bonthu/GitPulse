@@ -191,10 +191,11 @@ function renderRepoHealthBadge(status) {
   }
   if (unpushedCount > 0) {
     return `
-      <div class="repo-health-pill unpushed" title="${unpushedCount} unpushed commit${unpushedCount > 1 ? 's' : ''}">
+      <button class="repo-health-pill unpushed clickable" onclick="event.stopPropagation(); handlePush('${esc(status.id)}')" title="Click to push ${unpushedCount} unpushed commit${unpushedCount > 1 ? 's' : ''} to remote">
         <span class="health-dot"></span>
         <span>${unpushedCount} unpushed</span>
-      </div>
+        <i data-lucide="arrow-up-to-line" style="width:11px;height:11px;opacity:0.85;"></i>
+      </button>
     `;
   }
   if (status.health === 'STALE') {
@@ -353,9 +354,9 @@ function filterAndRenderDashboardCards() {
           <i data-lucide="file-pen" style="color:var(--warning);"></i>
           <span>${r.changed_count} changed file${r.changed_count > 1 ? 's' : ''}</span>
         </div>` : ''}
-        ${r.unpushed_count > 0 ? `<div class="dash-card-stat">
-          <i data-lucide="arrow-up-circle" style="color:var(--error);"></i>
-          <span>${r.unpushed_count} unpushed commit${r.unpushed_count > 1 ? 's' : ''}</span>
+        ${r.unpushed_count > 0 ? `<div class="dash-card-stat dash-card-stat-clickable" onclick="event.stopPropagation(); handlePush('${esc(r.id)}')" title="Push ${r.unpushed_count} unpushed commit(s) to remote">
+          <i data-lucide="arrow-up-circle" style="color:var(--accent);"></i>
+          <span>${r.unpushed_count} unpushed &bull; <b>Push</b></span>
         </div>` : ''}
         ${r.health === 'CLEAN' && r.changed_count === 0 && r.unpushed_count === 0 ? `<div class="dash-card-stat">
           <i data-lucide="circle-check" style="color:var(--success);"></i>
@@ -499,6 +500,10 @@ function renderRepoDetail(status, tree, log, stash) {
           </button>
         ` : ''}
         ${status.branch.ahead > 0 ? `
+          <button class="btn-sync push-btn" onclick="handlePush()" title="Push ${status.branch.ahead} unpushed commit${status.branch.ahead > 1 ? 's' : ''} to ${esc(status.branch.remote_name || 'origin')}">
+            <i data-lucide="arrow-up-to-line" style="width:12px;height:12px;"></i>
+            <span>Push (${status.branch.ahead})</span>
+          </button>
           <button class="btn-sync" onclick="handleGeneratePR()" title="Generate GitHub PR description from unpushed commits" style="color:var(--accent);border-color:rgba(59,130,246,0.3);">
             <i data-lucide="git-pull-request" style="width:12px;height:12px;"></i>
             <span>Generate PR</span>
@@ -731,11 +736,23 @@ function updateSelectionUI() {
   const summary = $('#selected-files-summary');
   const hint = $('#commit-selection-hint');
 
+  const directPushBtn = $('#direct-push-btn');
+  const directPushLabel = $('#direct-push-label');
+  const ahead = state.repoDetail?.branch?.ahead || 0;
+
   if (count === 0) {
     if (label) label.textContent = 'Select All';
     if (icon) icon.setAttribute('data-lucide', 'check-square');
     if (summary) summary.textContent = '';
-    if (hint) hint.textContent = total > 0 ? `All ${total} changed files will be committed` : '';
+    if (hint) {
+      if (total > 0) {
+        hint.textContent = `All ${total} changed files will be committed`;
+      } else if (ahead > 0) {
+        hint.innerHTML = `<span style="color:var(--accent);font-weight:500;">${ahead} unpushed commit${ahead > 1 ? 's' : ''} ready for remote</span>`;
+      } else {
+        hint.textContent = '';
+      }
+    }
   } else if (count === total) {
     if (label) label.textContent = 'Deselect All';
     if (icon) icon.setAttribute('data-lucide', 'square');
@@ -746,6 +763,15 @@ function updateSelectionUI() {
     if (icon) icon.setAttribute('data-lucide', 'minus-square');
     if (summary) summary.textContent = `${count} of ${total} selected`;
     if (hint) hint.textContent = `${count} of ${total} files selected for commit`;
+  }
+
+  if (directPushBtn) {
+    if (total === 0 && ahead > 0) {
+      directPushBtn.classList.remove('hidden');
+      if (directPushLabel) directPushLabel.textContent = `Push ${ahead} Commit${ahead > 1 ? 's' : ''}`;
+    } else {
+      directPushBtn.classList.add('hidden');
+    }
   }
 
   refreshIcons();
@@ -1199,6 +1225,22 @@ window.handlePull = async function() {
   } catch {}
 };
 
+window.handlePush = async function(repoId) {
+  const id = repoId || state.selectedRepoId;
+  if (!id) return;
+  try {
+    await Toast.promise(
+      api('POST', `/repos/${id}/push`),
+      { loading: 'Pushing commits to remote...', success: (r) => r.message || 'Pushed successfully!', error: (e) => e.message }
+    );
+    if (state.selectedRepoId === id) {
+      selectRepo(id);
+    } else {
+      loadDashboard();
+    }
+  } catch {}
+};
+
 // --- Discard Changes ---
 window.handleDiscardFile = function(filePath) {
   if (!state.selectedRepoId) return;
@@ -1640,6 +1682,13 @@ function getAvailableCommands() {
       });
     }
     if (state.repoDetail.branch?.ahead > 0) {
+      commands.push({
+        group: 'Repository Actions',
+        title: `Push ${state.repoDetail.branch.ahead} Commit(s)`,
+        subtitle: `Push unpushed commits to ${state.repoDetail.branch.remote_name || 'origin'}`,
+        icon: 'arrow-up-to-line',
+        action: () => handlePush()
+      });
       commands.push({
         group: 'Repository Actions',
         title: 'Generate GitHub PR Description',
@@ -2357,3 +2406,4 @@ window.closeCommandPalette = closeCommandPalette;
 window.handleReviewChanges = handleReviewChanges;
 window.handleGeneratePR = handleGeneratePR;
 window.handleFetchAll = handleFetchAll;
+window.handlePush = handlePush;

@@ -357,12 +357,21 @@ def commit_changes(repo_path: str, message: str, files: Optional[List[str]] = No
 def push_changes(repo_path: str) -> Tuple[bool, str]:
     try:
         repo = Repo(repo_path)
-        if repo.active_branch.tracking_branch() is None:
-            return False, "No upstream branch configured"
-        push_info = repo.remotes.origin.push()
-        if push_info and push_info[0].flags & git.remote.PushInfo.ERROR:
-            return False, push_info[0].summary
-        return True, "Pushed successfully"
+        tracking = repo.active_branch.tracking_branch()
+        if tracking is None:
+            if repo.remotes:
+                remote_name = repo.remotes[0].name
+                branch_name = repo.active_branch.name
+                repo.git.push('-u', remote_name, branch_name)
+                return True, f"Pushed to {remote_name}/{branch_name} (upstream set)"
+            return False, "No upstream remote configured. Please publish this repository first."
+        remote_name = tracking.remote_name or "origin"
+        branch_name = repo.active_branch.name
+        res = repo.git.push(remote_name, branch_name)
+        return True, res.strip() if res else "Pushed successfully"
+    except git.GitCommandError as e:
+        err = e.stderr.strip() if e.stderr else str(e)
+        return False, err
     except Exception as e:
         return False, str(e)
 
